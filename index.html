@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#8c2332">
+<title>マイ手帳（モックアップ）</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  :root{
+    --paper:#fbf7ee;      /* EDiT風クリーム紙色 */
+    --ink:#3a3630;
+    --line:#d8d2c4;
+    --accent:#8c2332;     /* EDiT風の深い赤 */
+    --holiday:#c0392b;
+  }
+  body{
+    font-family:"Hiragino Sans","Yu Gothic",Meiryo,sans-serif;
+    background:var(--paper); color:var(--ink);
+    padding-bottom:64px; overscroll-behavior-x:none;
+  }
+  header{
+    background:var(--paper); border-bottom:2px solid var(--ink);
+    padding:10px 12px 6px; position:sticky; top:0; z-index:10;
+    display:flex; align-items:baseline; gap:8px;
+  }
+  header .mnum{ font-size:26px; font-weight:bold; font-family:Georgia,serif; }
+  header .mname{ font-size:15px; letter-spacing:1px; }
+  header .yr{ font-size:12px; color:#8a8478; }
+  header .nav{ margin-left:auto; display:flex; gap:4px; }
+  header .nav button{
+    border:1px solid var(--line); background:#fff; border-radius:6px;
+    min-width:40px; min-height:34px; font-size:14px; color:var(--ink);
+  }
+  .banner{
+    background:#f3ead6; color:#8a7a4e; font-size:11px; text-align:center; padding:3px;
+  }
+
+  /* ===== 下部タブ ===== */
+  nav.tabbar{
+    position:fixed; bottom:0; left:0; right:0; z-index:30;
+    display:flex; background:#fff; border-top:1px solid var(--line);
+    padding-bottom:env(safe-area-inset-bottom);
+  }
+  nav.tabbar button{
+    flex:1; padding:12px 0; min-height:48px; border:none; background:none;
+    font-size:13px; color:#9a9488;
+  }
+  nav.tabbar button.active{ color:var(--accent); font-weight:bold; border-top:2px solid var(--accent); }
+
+  /* ===== 週間バーチカル ===== */
+  #weekPage{ display:flex; user-select:none; }
+  .timeaxis{
+    width:26px; flex:none; position:relative; border-right:1px solid var(--line);
+    padding-top:46px; /* 日付ヘッダぶん */
+  }
+  .timeaxis span{
+    position:absolute; right:3px; font-size:9px; color:#a09a8c; transform:translateY(-50%);
+  }
+  .daycol{ flex:1; border-right:1px solid var(--line); min-width:0; }
+  .dayhead{ height:46px; padding:3px 2px; border-bottom:1px solid var(--ink); text-align:center; overflow:hidden; }
+  .dayhead .dnum{ font-size:15px; font-weight:bold; font-family:Georgia,serif; }
+  .dayhead .dow{ font-size:9px; letter-spacing:1px; color:#8a8478; }
+  .dayhead.sat .dnum{ color:#2471a3; } .dayhead.sun .dnum, .dayhead.hol .dnum{ color:var(--holiday); }
+  .dayhead .hname{ font-size:8px; color:var(--holiday); display:block; line-height:1; }
+  .allday{
+    font-size:9px; border-radius:3px; margin:1px; padding:1px 2px; color:#fff;
+    white-space:nowrap; overflow:hidden;
+  }
+  .slotarea{
+    position:relative;
+    background:
+      repeating-linear-gradient(to bottom,
+        transparent 0, transparent 25px, var(--line) 25px, var(--line) 26px);
+  }
+  /* マーカーバー（蛍光ペン再現） */
+  .bar{
+    position:absolute; border-radius:6px; opacity:.92; overflow:hidden;
+  }
+  .bar .lbl{
+    display:block; font-size:10px; line-height:1.2;
+    padding:2px 3px; color:#403a30; font-weight:600;
+    white-space:normal; word-break:break-all; overflow-wrap:anywhere;
+  }
+  .bar .lbl.red{ color:var(--holiday); }
+  .depart{
+    position:absolute; height:13px; z-index:2;
+    font-size:8.5px; color:#6d675c; background:rgba(255,255,255,.85);
+    border:1px solid var(--line); border-radius:3px;
+    text-align:center; white-space:nowrap; overflow:hidden; line-height:11px;
+  }
+  /* ===== 週下部: TODO・メモ ===== */
+  .weekfoot{ border-top:2px solid var(--ink); padding:8px 12px 16px; }
+  .weekfoot h3{ font-size:11px; letter-spacing:2px; color:#8a8478; margin:6px 0 2px; }
+  .todo label{ display:flex; gap:8px; align-items:center; font-size:13px; padding:5px 0; border-bottom:1px dotted var(--line); }
+  .memo{
+    width:100%; border:none; background:repeating-linear-gradient(to bottom, transparent 0 25px, var(--line) 25px 26px);
+    line-height:26px; font-size:13px; min-height:80px; resize:none; outline:none; color:var(--ink);
+  }
+  .pagehint{ text-align:center; font-size:10px; color:#b0a996; padding:4px; }
+
+  /* ===== 月間ブロック ===== */
+  table.month{ width:100%; border-collapse:collapse; table-layout:fixed; }
+  table.month th{
+    border:1px solid var(--line); border-top:2px solid var(--ink); font-size:9px;
+    letter-spacing:1px; color:#8a8478; padding:3px 0; font-weight:normal;
+  }
+  table.month th.wk{ width:18px; }
+  table.month th.sat{ color:#2471a3; } table.month th.sun{ color:var(--holiday); }
+  table.month td{ border:1px solid var(--line); vertical-align:top; height:86px; padding:1px; }
+  td.wkcell{ background:#f4efe2; font-size:8px; color:#a09a8c; text-align:center; writing-mode:vertical-rl; letter-spacing:1px; }
+  .cell-date{ font-size:12px; font-weight:bold; font-family:Georgia,serif; padding:1px 2px 0; }
+  .cell-date .rk{ font-size:7.5px; color:#b0a996; font-weight:normal; margin-left:2px; }
+  .cell-date .hn{ font-size:7.5px; color:var(--holiday); font-weight:normal; display:block; line-height:1.1; }
+  td.sun .cell-date, td.hol .cell-date{ color:var(--holiday); }
+  td.sat .cell-date{ color:#2471a3; }
+  td.othermonth{ background:#f6f2e7; } td.othermonth .cell-date{ color:#c9c2b0; }
+  .mev{ font-size:8.5px; line-height:1.35; white-space:nowrap; overflow:hidden; padding-left:2px; }
+  .mev .sw{ display:inline-block; width:5px; height:5px; border-radius:1px; margin-right:2px; }
+  .mev.red{ color:var(--holiday); font-weight:bold; }
+  .dm{ /* 日付マスの右上の●印（3色） */
+    float:right; width:13px; height:13px; border-radius:50%;
+    margin:2px 2px 0 0; border:1.5px solid #b8ad95; background:transparent;
+  }
+  .dm.red{ background:#d23b2e; border-color:#d23b2e; }
+  .dm.blue{ background:#2a5fb4; border-color:#2a5fb4; }
+  .dm.green{ background:#3f8f3a; border-color:#3f8f3a; }
+  .dayhead .dm{ float:none; display:inline-block; width:8px; height:8px; border:none; margin:0 0 0 3px; vertical-align:1px; }
+  .mbc{ /* 丸囲み略号（手帳の○文字を再現） */
+    display:inline-block; width:12px; height:12px; border-radius:50%;
+    border:1.3px solid; font-size:8px; line-height:10px; text-align:center;
+    font-weight:bold; margin-right:2px; vertical-align:-1px; background:#fff;
+  }
+  .mini{ display:flex; gap:14px; justify-content:flex-end; padding:8px 12px; }
+  .mini table{ border-collapse:collapse; }
+  .mini caption{ font-size:9px; text-align:left; color:#8a8478; }
+  .mini td,.mini th{ font-size:7.5px; padding:1px 2px; color:#8a8478; font-weight:normal; text-align:center; }
+
+  /* ===== 設定（色の名前） ===== */
+  #view-settings{ padding:14px; }
+  .legendrow{ display:flex; align-items:center; gap:10px; padding:8px 0; border-bottom:1px dotted var(--line); }
+  .legendrow .sw{ width:26px; height:26px; border-radius:6px; flex:none; }
+  .legendrow input{ flex:1; border:1px solid var(--line); border-radius:6px; padding:8px; font-size:16px; background:#fff; }
+  .note{ font-size:11px; color:#8a8478; margin-top:14px; line-height:1.7; }
+
+  /* ===== 追加ボタン・入力シート ===== */
+  #addBtn{
+    position:fixed; right:14px; bottom:76px; z-index:25;
+    width:54px; height:54px; border-radius:50%; border:none;
+    background:var(--accent); color:#fff; font-size:26px; box-shadow:0 2px 8px rgba(0,0,0,.3);
+  }
+  #overlay{ position:fixed; inset:0; background:rgba(0,0,0,.35); display:none; z-index:40; }
+  #overlay.show{ display:block; }
+  #sheet{
+    position:fixed; left:0; right:0; bottom:-110%; z-index:50;
+    background:#fff; border-radius:16px 16px 0 0; padding:16px 16px calc(16px + env(safe-area-inset-bottom));
+    box-shadow:0 -2px 14px rgba(0,0,0,.25); transition:bottom .25s; max-height:86vh; overflow-y:auto;
+  }
+  #sheet.open{ bottom:0; }
+  #sheet h2{ font-size:15px; margin-bottom:8px; }
+  #sheet .row{ display:flex; gap:8px; margin-bottom:8px; align-items:center; }
+  #sheet label.fl{ font-size:12px; color:#8a8478; width:64px; flex:none; }
+  #sheet input[type=text], #sheet input[type=date], #sheet input[type=time]{
+    flex:1; min-width:0; border:1px solid var(--line); border-radius:6px; padding:9px; font-size:16px;
+  }
+  .swpick{ display:flex; gap:8px; flex:1; }
+  .swpick button{ width:32px; height:32px; border-radius:8px; border:2px solid transparent; }
+  .swpick button.sel{ border-color:var(--ink); }
+  .chk{ font-size:13px; display:flex; align-items:center; gap:6px; }
+  .sheet-actions{ display:flex; gap:10px; margin-top:12px; }
+  .sheet-actions button{ flex:1; padding:13px; border-radius:8px; border:none; font-size:15px; }
+  .btn-save{ background:var(--accent); color:#fff; }
+  .btn-cancel{ background:#eee; }
+  .btn-del{ background:#fff; color:var(--holiday); border:1px solid var(--holiday) !important; }
+</style>
+</head>
+<body>
+
+<div class="banner">モックアップ版：サンプルデータ表示中（見た目確認用）。共有・通知は本実装で対応します</div>
+<header>
+  <span class="mnum" id="h-num">5</span><span class="mname" id="h-name">May</span><span class="yr" id="h-yr">2026</span>
+  <span class="yr" id="h-sub"></span>
+  <div class="nav">
+    <button onclick="move(-1)">◀</button><button onclick="goToday()">今日</button><button onclick="move(1)">▶</button>
+  </div>
+</header>
+
+<main>
+  <section id="view-week">
+    <div id="weekPage"></div>
+    <div class="pagehint" id="pagehint" style="cursor:pointer" onclick="page=1-page;render()">◀ スワイプでページをめくる ▶</div>
+    <div class="weekfoot">
+      <h3>WEEKLY TO DO</h3>
+      <div class="todo" id="todoList"></div>
+      <h3>MEMO</h3>
+      <textarea class="memo" id="memoBox" placeholder="（自由に書けるメモ欄）"></textarea>
+    </div>
+  </section>
+
+  <section id="view-month" hidden>
+    <table class="month" id="monthTable"></table>
+    <div class="mini" id="miniCals"></div>
+  </section>
+
+  <section id="view-settings" hidden>
+    <h3 style="font-size:14px;margin-bottom:6px">マーカーの色分け（名前を付けられます）</h3>
+    <div id="legend"></div>
+    <p class="note">
+      ・蛍光マーカー6色＋みんなの予定用の赤の7色です。名前は自由に変えられます。<br>
+      ・月間の日付マスの<b>右上の○をタップ</b>すると、紙の手帳と同じ●印を「赤→青→緑→なし」の順で付けられます。<br>
+      ・本実装では、家族共有（Googleカレンダー連携）・出発時間の通知・バックアップがここに並びます。
+    </p>
+  </section>
+</main>
+
+<button id="addBtn" onclick="openSheet()">＋</button>
+
+<nav class="tabbar">
+  <button class="active" data-v="week" onclick="switchTab('week',this)">週間</button>
+  <button data-v="month" onclick="switchTab('month',this)">月間</button>
+  <button data-v="settings" onclick="switchTab('settings',this)">設定</button>
+</nav>
+
+<div id="overlay" onclick="closeSheet()"></div>
+<div id="sheet">
+  <h2 id="sheetTitle">予定を追加</h2>
+  <div class="row"><label class="fl">タイトル</label><input type="text" id="f-title" placeholder="例：塾（笠岡）"></div>
+  <div class="row"><label class="fl">日付</label><input type="date" id="f-date"></div>
+  <div class="row"><label class="fl">時間</label><input type="time" id="f-start" onchange="updateDepartPreview()"><span>〜</span><input type="time" id="f-end"></div>
+  <div class="row"><label class="fl">マーカー</label><div class="swpick" id="swpick"></div></div>
+  <div class="row"><label class="fl">略号</label>
+    <input type="text" id="f-badge" maxlength="1" style="flex:0 0 56px;text-align:center" placeholder="サ">
+    <span style="font-size:11px;color:#8a8478">1文字。月間で○囲み表示（任意）</span></div>
+  <div class="row"><label class="fl">🏠出発</label>
+    <select id="f-depart-min" onchange="updateDepartPreview()" style="flex:1;border:1px solid var(--line);border-radius:6px;padding:9px;font-size:16px;background:#fff"></select>
+    <span id="departPreview" style="font-size:12px;color:#6d675c;min-width:86px"></span></div>
+  <div class="row">
+    <label class="chk"><input type="checkbox" id="f-red">重要（赤ペン）</label>
+    <label class="chk"><input type="checkbox" id="f-notify">🔔通知する</label>
+    <label class="chk"><input type="checkbox" id="f-allday">終日</label>
+  </div>
+  <div class="sheet-actions">
+    <button class="btn-cancel" onclick="closeSheet()">キャンセル</button>
+    <button class="btn-del" id="delBtn" onclick="deleteEvent()" style="display:none">削除</button>
+    <button class="btn-save" onclick="saveEvent()">保存</button>
+  </div>
+</div>
+
+<script>
+/* ================= 基本設定 ================= */
+const MARKERS = {
+  pink:  "#f7a8c4", blue:  "#7ccdd1", green:"#a8d178",
+  yellow:"#e6de6f", orange:"#f6b26b", purple:"#a98fdc",
+  red:   "#ef8078",
+};
+const DEFAULT_NAMES = { pink:"長女", blue:"長男", green:"次男", yellow:"仕事", orange:"わたし", purple:"バイト", red:"みんな" };
+const PEN = { // 丸囲み略号・ペン書き用の濃い色（マーカーと同系統）
+  pink:"#d6608f", blue:"#2a92a0", green:"#5a9e32", yellow:"#a89b1d",
+  orange:"#dd8a2e", purple:"#7c5fc9", red:"#c0392b",
+};
+const HOLIDAYS = { // モック用サンプル（本実装では祝日データを内蔵）
+  "2026-05-03":"憲法記念日","2026-05-04":"みどりの日","2026-05-05":"こどもの日","2026-05-06":"振替休日",
+  "2026-07-20":"海の日","2026-08-11":"山の日",
+};
+const ROKUYO = ["大安","赤口","先勝","友引","先負","仏滅"]; // モックでは簡易表示
+const HOUR_S = 5, HOUR_E = 24, HPX = 26; // 5時〜24時・1時間26px
+const DOWS = ["MON","TUE","WED","THU","FRI","SAT","SUN"];
+const MNAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+
+/* ================= データ ================= */
+const LS = "techo-mock-v4"; // 日付●印対応版（旧バージョンのデータは初期化される）
+let store = JSON.parse(localStorage.getItem(LS) || "null");
+if (!store) {
+  // サンプル週: 2026-05-04(月)〜05-10(日) — 実際の手帳の使い方を模したダミー
+  store = { events: [
+    ev("2026-05-04","部活","blue","08:30","12:00",{depart:"07:50",notify:1}),
+    ev("2026-05-04","散歩","green","17:30","18:00",{badge:"サ"}),
+    ev("2026-05-05","こどもの日おでかけ","red",null,null,{allday:1}),
+    ev("2026-05-05","散歩","green",null,null,{allday:1,badge:"サ"}),
+    ev("2026-05-05","塾（笠岡）","blue","19:30","21:30",{depart:"19:00",notify:1}),
+    ev("2026-05-06","総会・打合せ","orange","10:00","12:00",{}),
+    ev("2026-05-06","散歩","green",null,null,{allday:1,badge:"サ"}),
+    ev("2026-05-06","メルカリ発送","yellow","19:00","20:00",{badge:"メ"}),
+    ev("2026-05-06","バイト","purple","21:00","24:00",{}),
+    ev("2026-05-07","部活","blue","08:30","12:00",{depart:"07:50",notify:1}),
+    ev("2026-05-07","歯医者","green","16:30","17:30",{}),
+    ev("2026-05-08","面接","yellow","11:00","12:00",{red:1}),
+    ev("2026-05-08","英検対策","pink","17:00","18:00",{badge:"英"}),
+    ev("2026-05-08","塾（笠岡）","blue","19:30","21:30",{depart:"19:00",notify:1}),
+    ev("2026-05-09","試合（大会）","blue","09:00","13:00",{depart:"08:00",notify:1,red:1}),
+    ev("2026-05-09","美容院","orange","10:00","11:30",{}),   // ← 試合とかぶり表示のデモ
+    ev("2026-05-09","ピアノ発表会","pink","14:00","16:00",{depart:"13:15",notify:1}),
+    ev("2026-05-10","遠征","blue","07:00","17:00",{depart:"06:30",notify:1}),
+    ev("2026-05-10","家族で外食","red","18:00","19:30",{}),
+  ],
+  names: {...DEFAULT_NAMES},
+  todos: [ {t:"上履きを洗う",d:1}, {t:"塾の月謝振込", d:0}, {t:"ユニフォーム名前付け", d:0} ],
+  memos: {},
+  daymarks: { "2026-05-06":"red", "2026-05-08":"blue", "2026-05-16":"green" }, // 日付右上の●印サンプル
+  };
+  save();
+}
+store.daymarks = store.daymarks || {};
+function cycleMark(evn, ds){ // 無印→赤→青→緑→無印 の順にタップで切替
+  evn.stopPropagation();
+  const order = [null,"red","blue","green"];
+  const next = order[(order.indexOf(store.daymarks[ds]||null)+1)%order.length];
+  if (next) store.daymarks[ds] = next; else delete store.daymarks[ds];
+  save(); render();
+}
+function ev(date,title,marker,start,end,o){ return { id:Math.random().toString(36).slice(2), date,title,marker,start,end, depart:o.depart||null, notify:!!o.notify, red:!!o.red, allday:!!o.allday, badge:o.badge||null }; }
+function save(){ localStorage.setItem(LS, JSON.stringify(store)); }
+
+/* ================= 状態 ================= */
+let tab = "week";
+let cur = new Date(2026,4,4);   // モックの初期表示（サンプル週）
+let page = 0;                    // 0=月火水(左ページ) 1=木金土日(右ページ)
+let editId = null;
+
+/* ================= ユーティリティ ================= */
+const fmt = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+const mins = t => { const [h,m]=t.split(":").map(Number); return (h===0?24:h)*60+m; }; // 0:00は24:00扱い
+function weekMon(d){ const x=new Date(d); x.setDate(x.getDate()-((x.getDay()+6)%7)); return x; }
+function addD(d,n){ const x=new Date(d); x.setDate(x.getDate()+n); return x; }
+const esc = s => (s||"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+/* ================= ヘッダ ================= */
+function renderHeader(){
+  const m = cur.getMonth();
+  document.getElementById("h-num").textContent = m+1;
+  document.getElementById("h-name").textContent = MNAMES[m];
+  document.getElementById("h-yr").textContent = cur.getFullYear();
+  let sub="";
+  if (tab==="week"){
+    const mon=weekMon(cur), sun=addD(mon,6);
+    sub = `${mon.getMonth()+1}/${mon.getDate()}〜${sun.getMonth()+1}/${sun.getDate()}`;
+  }
+  document.getElementById("h-sub").textContent = sub;
+}
+function move(n){
+  if (tab==="week"){ cur = addD(cur, 7*n); }
+  else { cur = new Date(cur.getFullYear(), cur.getMonth()+n, 1); }
+  render();
+}
+function goToday(){ cur = new Date(2026,4,4); page=0; render(); } // モックはサンプル週へ
+
+/* ================= 週間バーチカル ================= */
+function renderWeek(){
+  const mon = weekMon(cur);
+  const days = (page===0 ? [0,1,2] : [3,4,5,6]).map(i=>addD(mon,i));
+  const wrap = document.getElementById("weekPage");
+  const H = (HOUR_E-HOUR_S)*HPX;
+  const maxAllday = Math.max(0, ...days.map(d=>store.events.filter(e=>e.date===fmt(d)&&e.allday).length));
+  const headH = 46 + maxAllday*18;
+
+  let axis = `<div class="timeaxis" style="height:${H+headH}px">`;
+  for(let h=HOUR_S; h<HOUR_E; h++) axis += `<span style="top:${headH+(h-HOUR_S)*HPX}px">${h===23?"深夜":h}</span>`;
+  axis += `</div>`;
+
+  let cols = "";
+  for (const d of days){
+    const ds = fmt(d), dow = (d.getDay()+6)%7;
+    const hol = HOLIDAYS[ds];
+    const dayEvents = store.events.filter(e=>e.date===ds && !e.allday && e.start);
+    const alldays  = store.events.filter(e=>e.date===ds && e.allday);
+    // かぶり判定 → レーン割当（重なった予定は横に並べる）
+    const sorted=[...dayEvents].sort((a,b)=>mins(a.start)-mins(b.start));
+    const lanes=[];
+    for(const e of sorted){
+      let li = lanes.findIndex(end=>end<=mins(e.start));
+      if(li<0){ li=lanes.length; lanes.push(0); }
+      lanes[li]=mins(e.end); e._lane=li;
+    }
+    const nl = Math.max(1,lanes.length);
+
+    let head = `<div class="dayhead ${dow===5?"sat":""} ${dow===6?"sun":""} ${hol?"hol":""}" style="height:${headH}px">
+      <span class="dnum">${d.getDate()}</span> <span class="dow">${DOWS[dow]}</span>${store.daymarks[ds]?`<span class="dm ${store.daymarks[ds]}"></span>`:""}
+      ${hol?`<span class="hname">${hol}</span>`:""}
+      ${alldays.map(e=>e.badge
+        ? `<div class="allday" style="background:#fff;color:${PEN[e.marker]};border:1px solid ${PEN[e.marker]}" onclick="openSheet('${e.id}')">◯${esc(e.badge)} ${esc(e.title)}</div>`
+        : `<div class="allday" style="background:${MARKERS[e.marker]}" onclick="openSheet('${e.id}')">${esc(e.title)}</div>`).join("")}
+    </div>`;
+
+    let bars = "";
+    for(const e of sorted){
+      const top=(mins(e.start)/60-HOUR_S)*HPX, h=Math.max(18,(mins(e.end)-mins(e.start))/60*HPX);
+      const w=100/nl, left=e._lane*w;
+      bars += `${e.depart?`<div class="depart" style="top:${top-14}px;left:${left}%;width:${w-3}%">🏠${e.depart}発</div>`:""}
+      <div class="bar" style="top:${top}px;height:${h}px;left:${left}%;width:${w-3}%;background:${MARKERS[e.marker]}66;border-left:5px solid ${MARKERS[e.marker]}" onclick="event.stopPropagation();openSheet('${e.id}')">
+        <span class="lbl ${e.red?"red":""}">${e.notify?"🔔":""}${esc(e.title)}</span>
+      </div>`;
+    }
+    cols += `<div class="daycol">${head}<div class="slotarea" style="height:${H}px" onclick="tapSlot(event,'${ds}')">${bars}</div></div>`;
+  }
+  wrap.innerHTML = axis + cols;
+  document.getElementById("pagehint").textContent = page===0 ? "月・火・水　｜　スワイプで木〜日へ ▶" : "◀ スワイプで月〜水へ　｜　木・金・土・日";
+
+  // TODO・メモ
+  document.getElementById("todoList").innerHTML = store.todos.map((t,i)=>
+    `<label><input type="checkbox" ${t.d?"checked":""} onchange="store.todos[${i}].d=this.checked?1:0;save()">
+     <span style="${t.d?"text-decoration:line-through;color:#b0a996":""}">${esc(t.t)}</span></label>`).join("");
+  const wk = fmt(weekMon(cur));
+  const memo = document.getElementById("memoBox");
+  memo.value = store.memos[wk]||"";
+  memo.oninput = ()=>{ store.memos[wk]=memo.value; save(); };
+}
+function tapSlot(evn, ds){
+  const y = evn.offsetY, h = Math.floor(y/HPX)+HOUR_S;
+  openSheet(null, ds, `${String(Math.min(h,23)).padStart(2,"0")}:00`);
+}
+
+/* ================= 月間ブロック ================= */
+function renderMonth(){
+  const y=cur.getFullYear(), m=cur.getMonth();
+  const first=new Date(y,m,1), start=weekMon(first);
+  let html = `<tr><th class="wk"></th>${["MONDAY","TUESDAY","WEDNESDAY","THURSDAY","FRIDAY","SATURDAY","SUNDAY"]
+    .map((n,i)=>`<th class="${i===5?"sat":i===6?"sun":""}">${n}</th>`).join("")}</tr>`;
+  let d = new Date(start);
+  for(let w=0; w<6; w++){
+    if (w>0 && d.getMonth()!==m) break;
+    let row = `<td class="wkcell">WEEKLY TO DO</td>`;
+    for(let i=0;i<7;i++){
+      const ds=fmt(d), other=d.getMonth()!==m, hol=HOLIDAYS[ds], dow=i;
+      const evs=store.events.filter(e=>e.date===ds)
+        .sort((a,b)=>(a.allday?-1:1)-(b.allday?-1:1) || (a.start&&b.start?mins(a.start)-mins(b.start):0));
+      const trim=t=>t.replace(/^0/,"").replace(/:00$/,"");
+      const rng=e=>e.start?`${trim(e.start)}-${trim(e.end==="24:00"?"0:00":e.end)} `:"";
+      row += `<td class="${other?"othermonth":""} ${dow===5?"sat":""} ${dow===6?"sun":""} ${hol?"hol":""}" onclick="gotoWeek('${ds}')">
+        <div class="cell-date"><span class="dm ${store.daymarks[ds]||""}" onclick="cycleMark(event,'${ds}')"></span>${d.getDate()}<span class="rk">${ROKUYO[(d.getDate()+m)%6]}</span>${hol?`<span class="hn">${hol}</span>`:""}</div>
+        ${evs.slice(0,5).map(e=>`<div class="mev ${e.red?"red":""}">${
+          e.badge
+            ? `<span class="mbc" style="border-color:${PEN[e.marker]};color:${PEN[e.marker]}">${esc(e.badge)}</span>${rng(e)}${esc(e.title)}`
+            : `<span class="sw" style="background:${MARKERS[e.marker]}"></span>${rng(e)}${esc(e.title)}`
+        }</div>`).join("")}
+        ${evs.length>5?`<div class="mev">+${evs.length-5}</div>`:""}
+      </td>`;
+      d = addD(d,1);
+    }
+    html += `<tr>${row}</tr>`;
+  }
+  document.getElementById("monthTable").innerHTML = html;
+
+  // 前月・翌月ミニカレンダー
+  let minis="";
+  for(const off of [-1,1]){
+    const md=new Date(y,m+off,1), my=md.getFullYear(), mm=md.getMonth();
+    const ms=weekMon(md); let cells=""; let dd=new Date(ms);
+    for(let w=0;w<6;w++){ let r="";
+      for(let i=0;i<7;i++){ r+=`<td style="${dd.getMonth()!==mm?"color:#d8d2c4":""}">${dd.getDate()}</td>`; dd=addD(dd,1); }
+      cells+=`<tr>${r}</tr>`; if(dd.getMonth()!==mm) break; }
+    minis += `<table><caption>${mm+1} ${MNAMES[mm].slice(0,3)} ${my}</caption><tr>${["M","T","W","T","F","S","S"].map(x=>`<th>${x}</th>`).join("")}</tr>${cells}</table>`;
+  }
+  document.getElementById("miniCals").innerHTML = minis;
+}
+function gotoWeek(ds){ cur = new Date(ds); const dow=(cur.getDay()+6)%7; page = dow<3?0:1; switchTab("week", document.querySelector('[data-v="week"]')); }
+
+/* ================= 設定（色の名前） ================= */
+function renderSettings(){
+  document.getElementById("legend").innerHTML = Object.keys(MARKERS).map(k=>
+    `<div class="legendrow"><div class="sw" style="background:${MARKERS[k]}"></div>
+     <input value="${esc(store.names[k]||"")}" placeholder="名前を付ける" onchange="store.names['${k}']=this.value;save()"></div>`).join("");
+}
+
+/* ================= 入力シート ================= */
+let selMarker="blue";
+const DEPART_OPTS = [5,10,15,20,30,40,50,60,90]; // 「開始◯分前に出発」の選択肢
+const rawMins = t => { const [h,m]=t.split(":").map(Number); return h*60+m; };
+function calcDepart(start, n){
+  let t = rawMins(start) - n; if (t<0) t += 1440;
+  return `${String(Math.floor(t/60)).padStart(2,"0")}:${String(t%60).padStart(2,"0")}`;
+}
+function updateDepartPreview(){
+  const start = document.getElementById("f-start").value;
+  const n = +document.getElementById("f-depart-min").value || 0;
+  document.getElementById("departPreview").textContent =
+    (start && n) ? `→ ${calcDepart(start,n)}に出発` : "";
+}
+function renderSwatches(){
+  document.getElementById("swpick").innerHTML = Object.keys(MARKERS).map(k=>
+    `<button class="${k===selMarker?"sel":""}" style="background:${MARKERS[k]}" title="${esc(store.names[k]||k)}"
+      onclick="selMarker='${k}';renderSwatches()"></button>`).join("");
+}
+function openSheet(id, date, time){
+  editId = id||null;
+  const e = id ? store.events.find(x=>x.id===id) : null;
+  document.getElementById("sheetTitle").textContent = e?"予定を編集":"予定を追加";
+  document.getElementById("delBtn").style.display = e?"block":"none";
+  document.getElementById("f-title").value = e?e.title:"";
+  document.getElementById("f-date").value = e?e.date:(date||fmt(cur));
+  document.getElementById("f-start").value = e?(e.start||""):(time||"");
+  document.getElementById("f-end").value = e?(e.end==="24:00"?"00:00":(e.end||"")):"";
+  // 出発プルダウン: 既存予定は「開始−出発」の差から◯分前を復元
+  let diff = null;
+  if (e && e.depart && e.start){ diff = rawMins(e.start) - rawMins(e.depart); if (diff<0) diff += 1440; }
+  const opts = [...DEPART_OPTS]; if (diff && !opts.includes(diff)){ opts.push(diff); opts.sort((a,b)=>a-b); }
+  document.getElementById("f-depart-min").innerHTML =
+    `<option value="">なし</option>` +
+    opts.map(n=>`<option value="${n}" ${n===diff?"selected":""}>${n}分前</option>`).join("");
+  document.getElementById("f-badge").value = e?(e.badge||""):"";
+  document.getElementById("f-red").checked = !!(e&&e.red);
+  document.getElementById("f-notify").checked = !!(e&&e.notify);
+  document.getElementById("f-allday").checked = !!(e&&e.allday);
+  selMarker = e?e.marker:"blue";
+  renderSwatches();
+  updateDepartPreview();
+  document.getElementById("sheet").classList.add("open");
+  document.getElementById("overlay").classList.add("show");
+}
+function closeSheet(){ document.getElementById("sheet").classList.remove("open"); document.getElementById("overlay").classList.remove("show"); }
+function saveEvent(){
+  const title=document.getElementById("f-title").value.trim();
+  if(!title){ alert("タイトルを入力してください"); return; }
+  const allday=document.getElementById("f-allday").checked;
+  let start=document.getElementById("f-start").value||null, end=document.getElementById("f-end").value||null;
+  if(end==="00:00") end="24:00";
+  if(!allday && (!start||!end)){ alert("時間を入力するか「終日」にしてください"); return; }
+  if(!allday && mins(end)<=mins(start)){ alert("終了時間は開始より後にしてください"); return; }
+  const obj={ id:editId||Math.random().toString(36).slice(2),
+    date:document.getElementById("f-date").value, title, marker:selMarker,
+    start:allday?null:start, end:allday?null:end,
+    depart:(!allday && start && document.getElementById("f-depart-min").value)
+      ? calcDepart(start, +document.getElementById("f-depart-min").value) : null,
+    badge:document.getElementById("f-badge").value.trim()||null,
+    notify:document.getElementById("f-notify").checked,
+    red:document.getElementById("f-red").checked, allday };
+  const i=store.events.findIndex(x=>x.id===obj.id);
+  if(i>=0) store.events[i]=obj; else store.events.push(obj);
+  save(); closeSheet(); render();
+}
+function deleteEvent(){
+  if(!editId) return;
+  if(!confirm("この予定を削除しますか？")) return;
+  store.events = store.events.filter(x=>x.id!==editId);
+  save(); closeSheet(); render();
+}
+
+/* ================= タブ・スワイプ ================= */
+function switchTab(v, btn){
+  tab=v;
+  document.querySelectorAll("main > section").forEach(s=>s.hidden=true);
+  document.getElementById("view-"+v).hidden=false;
+  document.querySelectorAll(".tabbar button").forEach(b=>b.classList.remove("active"));
+  (btn||document.querySelector(`[data-v="${v}"]`)).classList.add("active");
+  document.getElementById("addBtn").style.display = v==="settings"?"none":"block";
+  render();
+}
+let tx=null;
+document.addEventListener("touchstart",e=>{ tx=e.touches[0].clientX; },{passive:true});
+document.addEventListener("touchend",e=>{
+  if(tx===null||tab!=="week") return;
+  const dx=e.changedTouches[0].clientX-tx; tx=null;
+  if(Math.abs(dx)<60) return;
+  if(dx<0){ if(page===0) page=1; else { cur=addD(cur,7); page=0; } }
+  else    { if(page===1) page=0; else { cur=addD(cur,-7); page=1; } }
+  render();
+},{passive:true});
+
+/* ================= 描画 ================= */
+function render(){
+  renderHeader();
+  if(tab==="week") renderWeek();
+  else if(tab==="month") renderMonth();
+  else renderSettings();
+}
+render();
+</script>
+</body>
+</html>

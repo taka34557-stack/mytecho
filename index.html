@@ -93,6 +93,11 @@
   .weekfoot{ border-top:2px solid var(--ink); padding:8px 12px 16px; }
   .weekfoot h3{ font-size:11px; letter-spacing:2px; color:#8a8478; margin:6px 0 2px; }
   .todo label{ display:flex; gap:8px; align-items:center; font-size:13px; padding:5px 0; border-bottom:1px dotted var(--line); }
+  .todo .del{ margin-left:auto; border:none; background:none; color:#b0a996; font-size:15px; padding:2px 8px; flex:none; }
+  .todo .carry{ border:1px solid var(--line); background:#fff; color:#8a7a4e; border-radius:6px; padding:7px 12px; font-size:12px; margin-top:4px; }
+  .todoadd{ display:flex; gap:6px; margin-top:8px; }
+  .todoadd input{ flex:1; min-width:0; border:1px solid var(--line); border-radius:6px; padding:9px; font-size:16px; background:#fff; }
+  .todoadd button{ border:none; background:var(--accent); color:#fff; border-radius:6px; padding:0 18px; font-size:14px; flex:none; }
   .memo{
     width:100%; border:none; background:repeating-linear-gradient(to bottom, transparent 0 25px, var(--line) 25px 26px);
     line-height:26px; font-size:13px; min-height:80px; resize:none; outline:none; color:var(--ink);
@@ -202,6 +207,10 @@
     <div class="weekfoot">
       <h3>WEEKLY TO DO</h3>
       <div class="todo" id="todoList"></div>
+      <div class="todoadd">
+        <input type="text" id="todoInput" placeholder="この週のやることを入力" onkeydown="if(event.key==='Enter')addTodo()">
+        <button onclick="addTodo()">追加</button>
+      </div>
       <h3>MEMO</h3>
       <textarea class="memo" id="memoBox" placeholder="（自由に書けるメモ欄）"></textarea>
     </div>
@@ -220,6 +229,7 @@
       ・月間の日付マスの<b>右上の○をタップ</b>すると、紙の手帳と同じ●印を「赤→青→緑→なし」の順で付けられます。<br>
       ・予定の追加で<b>「🔁 毎週」</b>を選ぶと、部活・塾・習い事などが一度の登録で毎週その曜日に表示されます（曜日は複数選べます）。<br>
       ・🔁マークの付いた毎週の予定をタップすると<b>「この日だけ」「毎週すべて」</b>を選んで変更・削除できます。リスケは「この日だけ」で日時を直せば他の週はそのままです。<br>
+      ・週間ページ下の<b>WEEKLY TO DO</b>は週ごとのやることリストです。入力欄から追加、チェックで完了、✕で削除。新しい週では前の週の残りを1タップで引き継げます。<br>
       ・本実装では、家族共有（Googleカレンダー連携）・出発時間の通知・バックアップがここに並びます。
     </p>
   </section>
@@ -319,13 +329,14 @@ if (!store) {
     ev("2026-05-10","家族で外食","red","18:00","19:30",{}),
   ],
   names: {...DEFAULT_NAMES},
-  todos: [ {t:"上履きを洗う",d:1}, {t:"塾の月謝振込", d:0}, {t:"ユニフォーム名前付け", d:0} ],
+  todos: { "2026-05-04": [ {t:"上履きを洗う",d:1}, {t:"塾の月謝振込", d:0}, {t:"ユニフォーム名前付け", d:0} ] },
   memos: {},
   daymarks: { "2026-05-06":"red", "2026-05-08":"blue", "2026-05-16":"green" }, // 日付右上の●印サンプル
   };
   save();
 }
 store.daymarks = store.daymarks || {};
+if (Array.isArray(store.todos)) store.todos = { "2026-05-04": store.todos }; // 旧形式→週ごとのTODOに移行
 function cycleMark(evn, ds){ // 無印→赤→青→緑→無印 の順にタップで切替
   evn.stopPropagation();
   const order = [null,"red","blue","green"];
@@ -431,14 +442,37 @@ function renderWeek(){
   wrap.innerHTML = axis + cols;
   document.getElementById("pagehint").textContent = page===0 ? "月・火・水　｜　スワイプで木〜日へ ▶" : "◀ スワイプで月〜水へ　｜　木・金・土・日";
 
-  // TODO・メモ
-  document.getElementById("todoList").innerHTML = store.todos.map((t,i)=>
-    `<label><input type="checkbox" ${t.d?"checked":""} onchange="store.todos[${i}].d=this.checked?1:0;save()">
-     <span style="${t.d?"text-decoration:line-through;color:#b0a996":""}">${esc(t.t)}</span></label>`).join("");
+  // TODO・メモ（週ごとに保存）
   const wk = fmt(weekMon(cur));
+  const tds = store.todos[wk]||[];
+  const prevRest = (store.todos[fmt(addD(weekMon(cur),-7))]||[]).filter(t=>!t.d).length;
+  document.getElementById("todoList").innerHTML = tds.length
+    ? tds.map((t,i)=>
+      `<label><input type="checkbox" ${t.d?"checked":""} onchange="toggleTodo('${wk}',${i},this.checked)">
+       <span style="${t.d?"text-decoration:line-through;color:#b0a996":""}">${esc(t.t)}</span>
+       <button class="del" onclick="event.preventDefault();delTodo('${wk}',${i})">✕</button></label>`).join("")
+    : `<div style="font-size:11px;color:#b0a996;padding:6px 0">この週のやることを下の欄から追加できます</div>`
+      + (prevRest ? `<button class="carry" onclick="carryTodo()">◀ 前の週の残り${prevRest}件を引き継ぐ</button>` : "");
   const memo = document.getElementById("memoBox");
   memo.value = store.memos[wk]||"";
   memo.oninput = ()=>{ store.memos[wk]=memo.value; save(); };
+}
+/* ===== WEEKLY TO DO ===== */
+function addTodo(){
+  const inp=document.getElementById("todoInput"), v=inp.value.trim();
+  if(!v) return;
+  const wk=fmt(weekMon(cur));
+  (store.todos[wk]=store.todos[wk]||[]).push({t:v,d:0});
+  inp.value=""; save(); renderWeek(); inp.focus();
+}
+function toggleTodo(wk,i,c){ store.todos[wk][i].d=c?1:0; save(); renderWeek(); }
+function delTodo(wk,i){ store.todos[wk].splice(i,1); save(); renderWeek(); }
+function carryTodo(){ // 前の週の未完了TODOをこの週に書き写す（紙手帳の引き継ぎ）
+  const wk=fmt(weekMon(cur)), pw=fmt(addD(weekMon(cur),-7));
+  const rest=(store.todos[pw]||[]).filter(t=>!t.d);
+  if(!rest.length) return;
+  store.todos[wk]=(store.todos[wk]||[]).concat(rest.map(t=>({t:t.t,d:0})));
+  save(); renderWeek();
 }
 function tapSlot(evn, ds){
   const y = evn.offsetY, h = Math.floor(y/HPX)+HOUR_S;

@@ -98,6 +98,14 @@
   .todoadd{ display:flex; gap:6px; margin-top:8px; }
   .todoadd input{ flex:1; min-width:0; border:1px solid var(--line); border-radius:6px; padding:9px; font-size:16px; background:#fff; }
   .todoadd button{ border:none; background:var(--accent); color:#fff; border-radius:6px; padding:0 18px; font-size:14px; flex:none; }
+  .h3sub{ letter-spacing:0; margin-left:6px; font-size:10px; font-weight:normal; }
+  .daychips{ display:flex; gap:4px; margin:4px 0 6px; }
+  .daychips button{ flex:1; min-height:44px; border:1px solid var(--line); border-radius:8px; background:#fff; font-size:11px; color:var(--ink); line-height:1.2; padding:4px 0 3px; position:relative; }
+  .daychips button.sel{ background:var(--accent); border-color:var(--accent); color:#fff; font-weight:bold; }
+  .daychips button .dd{ font-size:14px; font-weight:bold; font-family:Georgia,serif; display:block; }
+  .daychips button .cnt{ position:absolute; top:2px; right:4px; font-size:9px; color:var(--accent); font-weight:bold; }
+  .daychips button.sel .cnt{ color:#fff; }
+  .dtdbadge{ font-size:8.5px; color:var(--accent); font-weight:bold; margin-left:2px; }
   .memo{
     width:100%; border:none; background:repeating-linear-gradient(to bottom, transparent 0 25px, var(--line) 25px 26px);
     line-height:26px; font-size:13px; min-height:80px; resize:none; outline:none; color:var(--ink);
@@ -205,7 +213,14 @@
     <div id="weekPage"></div>
     <div class="pagehint" id="pagehint" style="cursor:pointer" onclick="page=1-page;render()">◀ スワイプでページをめくる ▶</div>
     <div class="weekfoot">
-      <h3>WEEKLY TO DO</h3>
+      <h3 id="dailySec">DAILY TO DO<span class="h3sub">（日ごとのやること）</span></h3>
+      <div class="daychips" id="dayChips"></div>
+      <div class="todo" id="dayTodoList"></div>
+      <div class="todoadd">
+        <input type="text" id="dayTodoInput" placeholder="この日のやることを入力" onkeydown="if(event.key==='Enter')addDayTodo()">
+        <button onclick="addDayTodo()">追加</button>
+      </div>
+      <h3>WEEKLY TO DO<span class="h3sub">（今週まとめて）</span></h3>
       <div class="todo" id="todoList"></div>
       <div class="todoadd">
         <input type="text" id="todoInput" placeholder="この週のやることを入力" onkeydown="if(event.key==='Enter')addTodo()">
@@ -229,7 +244,8 @@
       ・月間の日付マスの<b>右上の○をタップ</b>すると、紙の手帳と同じ●印を「赤→青→緑→なし」の順で付けられます。<br>
       ・予定の追加で<b>「🔁 毎週」</b>を選ぶと、部活・塾・習い事などが一度の登録で毎週その曜日に表示されます（曜日は複数選べます）。<br>
       ・🔁マークの付いた毎週の予定をタップすると<b>「この日だけ」「毎週すべて」</b>を選んで変更・削除できます。リスケは「この日だけ」で日時を直せば他の週はそのままです。<br>
-      ・週間ページ下の<b>WEEKLY TO DO</b>は週ごとのやることリストです。入力欄から追加、チェックで完了、✕で削除。新しい週では前の週の残りを1タップで引き継げます。<br>
+      ・週間ページ下の<b>DAILY TO DO</b>は日ごと、<b>WEEKLY TO DO</b>は週ごとのやることリストです。入力欄から追加、チェックで完了、✕で削除。残りは前の日／前の週から1タップで引き継げます。<br>
+      ・週間の日付（例: 4 MON）をタップするとその日のDAILY TO DOに移動します。日付の横の<b>□数字</b>はその日の残り件数です。<br>
       ・本実装では、家族共有（Googleカレンダー連携）・出発時間の通知・バックアップがここに並びます。
     </p>
   </section>
@@ -330,12 +346,14 @@ if (!store) {
   ],
   names: {...DEFAULT_NAMES},
   todos: { "2026-05-04": [ {t:"上履きを洗う",d:1}, {t:"塾の月謝振込", d:0}, {t:"ユニフォーム名前付け", d:0} ] },
+  dtodos: { "2026-05-05": [ {t:"お弁当作り",d:1} ], "2026-05-08": [ {t:"面接の書類準備",d:0}, {t:"クリーニング受け取り",d:0} ] },
   memos: {},
   daymarks: { "2026-05-06":"red", "2026-05-08":"blue", "2026-05-16":"green" }, // 日付右上の●印サンプル
   };
   save();
 }
 store.daymarks = store.daymarks || {};
+store.dtodos = store.dtodos || {};
 if (Array.isArray(store.todos)) store.todos = { "2026-05-04": store.todos }; // 旧形式→週ごとのTODOに移行
 function cycleMark(evn, ds){ // 無印→赤→青→緑→無印 の順にタップで切替
   evn.stopPropagation();
@@ -420,12 +438,13 @@ function renderWeek(){
     }
     const nl = Math.max(1,lanes.length);
 
-    let head = `<div class="dayhead ${dow===5?"sat":""} ${dow===6?"sun":""} ${hol?"hol":""}" style="height:${headH}px">
-      <span class="dnum">${d.getDate()}</span> <span class="dow">${DOWS[dow]}</span>${store.daymarks[ds]?`<span class="dm ${store.daymarks[ds]}"></span>`:""}
+    const dtdRest = (store.dtodos[ds]||[]).filter(t=>!t.d).length;
+    let head = `<div class="dayhead ${dow===5?"sat":""} ${dow===6?"sun":""} ${hol?"hol":""}" style="height:${headH}px" onclick="gotoDayTodo('${ds}')">
+      <span class="dnum">${d.getDate()}</span> <span class="dow">${DOWS[dow]}</span>${store.daymarks[ds]?`<span class="dm ${store.daymarks[ds]}"></span>`:""}${dtdRest?`<span class="dtdbadge">□${dtdRest}</span>`:""}
       ${hol?`<span class="hname">${hol}</span>`:""}
       ${alldays.map(e=>e.badge
-        ? `<div class="allday" style="background:#fff;color:${PEN[e.marker]};border:1px solid ${PEN[e.marker]}" onclick="openSheet('${e.id}','${ds}')">${e.repeat?"🔁":""}◯${esc(e.badge)} ${esc(e.title)}</div>`
-        : `<div class="allday" style="background:${MARKERS[e.marker]}" onclick="openSheet('${e.id}','${ds}')">${e.repeat?"🔁":""}${esc(e.title)}</div>`).join("")}
+        ? `<div class="allday" style="background:#fff;color:${PEN[e.marker]};border:1px solid ${PEN[e.marker]}" onclick="event.stopPropagation();openSheet('${e.id}','${ds}')">${e.repeat?"🔁":""}◯${esc(e.badge)} ${esc(e.title)}</div>`
+        : `<div class="allday" style="background:${MARKERS[e.marker]}" onclick="event.stopPropagation();openSheet('${e.id}','${ds}')">${e.repeat?"🔁":""}${esc(e.title)}</div>`).join("")}
     </div>`;
 
     let bars = "";
@@ -456,7 +475,53 @@ function renderWeek(){
   const memo = document.getElementById("memoBox");
   memo.value = store.memos[wk]||"";
   memo.oninput = ()=>{ store.memos[wk]=memo.value; save(); };
+  renderDayTodos();
 }
+/* ===== DAILY TO DO（日ごと） ===== */
+let selDay = null;
+function renderDayTodos(){
+  const mon = weekMon(cur);
+  const days = [...Array(7)].map((_,i)=>fmt(addD(mon,i)));
+  if(!selDay || !days.includes(selDay)){
+    const today = fmt(new Date());
+    selDay = days.includes(today) ? today : days[page===0?0:3];
+  }
+  document.getElementById("dayChips").innerHTML = days.map((ds,i)=>{
+    const rest=(store.dtodos[ds]||[]).filter(t=>!t.d).length;
+    return `<button class="${ds===selDay?"sel":""}" onclick="selDay='${ds}';renderDayTodos()">
+      <span class="dd">${+ds.slice(8)}</span>${DOWJP[i]}${rest?`<span class="cnt">${rest}</span>`:""}</button>`;
+  }).join("");
+  const tds = store.dtodos[selDay]||[];
+  const pd = fmt(addD(new Date(selDay),-1));
+  const prevRest = (store.dtodos[pd]||[]).filter(t=>!t.d).length;
+  document.getElementById("dayTodoList").innerHTML = tds.length
+    ? tds.map((t,i)=>
+      `<label><input type="checkbox" ${t.d?"checked":""} onchange="toggleDayTodo('${selDay}',${i},this.checked)">
+       <span style="${t.d?"text-decoration:line-through;color:#b0a996":""}">${esc(t.t)}</span>
+       <button class="del" onclick="event.preventDefault();delDayTodo('${selDay}',${i})">✕</button></label>`).join("")
+    : `<div style="font-size:11px;color:#b0a996;padding:6px 0">${jpDate(selDay)}のやることを下の欄から追加できます</div>`
+      + (prevRest ? `<button class="carry" onclick="carryDayTodo()">◀ 前の日の残り${prevRest}件を引き継ぐ</button>` : "");
+}
+function addDayTodo(){
+  const inp=document.getElementById("dayTodoInput"), v=inp.value.trim();
+  if(!v) return;
+  (store.dtodos[selDay]=store.dtodos[selDay]||[]).push({t:v,d:0});
+  inp.value=""; save(); render(); inp.focus();
+}
+function toggleDayTodo(ds,i,c){ store.dtodos[ds][i].d=c?1:0; save(); render(); }
+function delDayTodo(ds,i){ store.dtodos[ds].splice(i,1); save(); render(); }
+function carryDayTodo(){ // 前日の未完了をこの日に書き写す
+  const pd=fmt(addD(new Date(selDay),-1));
+  const rest=(store.dtodos[pd]||[]).filter(t=>!t.d);
+  if(!rest.length) return;
+  store.dtodos[selDay]=(store.dtodos[selDay]||[]).concat(rest.map(t=>({t:t.t,d:0})));
+  save(); render();
+}
+function gotoDayTodo(ds){ // 日付ヘッダのタップでその日のDAILY TO DOへ
+  selDay=ds; renderDayTodos();
+  document.getElementById("dailySec").scrollIntoView({behavior:"smooth"});
+}
+
 /* ===== WEEKLY TO DO ===== */
 function addTodo(){
   const inp=document.getElementById("todoInput"), v=inp.value.trim();
@@ -522,7 +587,7 @@ function renderMonth(){
   }
   document.getElementById("miniCals").innerHTML = minis;
 }
-function gotoWeek(ds){ cur = new Date(ds); const dow=(cur.getDay()+6)%7; page = dow<3?0:1; switchTab("week", document.querySelector('[data-v="week"]')); }
+function gotoWeek(ds){ cur = new Date(ds); const dow=(cur.getDay()+6)%7; page = dow<3?0:1; selDay = ds; switchTab("week", document.querySelector('[data-v="week"]')); }
 
 /* ================= 設定（色の名前） ================= */
 function renderSettings(){

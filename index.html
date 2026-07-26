@@ -172,6 +172,16 @@
   .btn-save{ background:var(--accent); color:#fff; }
   .btn-cancel{ background:#eee; }
   .btn-del{ background:#fff; color:var(--holiday); border:1px solid var(--holiday) !important; }
+
+  /* ===== くり返し設定 ===== */
+  .seg{ display:flex; flex:1; border:1.5px solid var(--line); border-radius:8px; overflow:hidden; }
+  .seg button{ flex:1; padding:10px 0; border:none; background:#fff; font-size:13px; color:#8a8478; }
+  .seg button.sel{ background:var(--accent); color:#fff; font-weight:bold; }
+  .dowpick{ display:flex; gap:5px; flex:1; flex-wrap:wrap; }
+  .dowpick button{ width:34px; height:34px; border-radius:50%; border:1px solid var(--line); background:#fff; font-size:13px; color:var(--ink); }
+  .dowpick button.sel{ background:var(--accent); border-color:var(--accent); color:#fff; font-weight:bold; }
+  .hint{ font-size:11px; color:#8a8478; }
+  .scopehint{ font-size:11px; color:#8a8478; margin:-2px 0 8px 72px; }
 </style>
 </head>
 <body>
@@ -208,6 +218,8 @@
     <p class="note">
       ・蛍光マーカー6色＋みんなの予定用の赤の7色です。名前は自由に変えられます。<br>
       ・月間の日付マスの<b>右上の○をタップ</b>すると、紙の手帳と同じ●印を「赤→青→緑→なし」の順で付けられます。<br>
+      ・予定の追加で<b>「🔁 毎週」</b>を選ぶと、部活・塾・習い事などが一度の登録で毎週その曜日に表示されます（曜日は複数選べます）。<br>
+      ・🔁マークの付いた毎週の予定をタップすると<b>「この日だけ」「毎週すべて」</b>を選んで変更・削除できます。リスケは「この日だけ」で日時を直せば他の週はそのままです。<br>
       ・本実装では、家族共有（Googleカレンダー連携）・出発時間の通知・バックアップがここに並びます。
     </p>
   </section>
@@ -224,8 +236,25 @@
 <div id="overlay" onclick="closeSheet()"></div>
 <div id="sheet">
   <h2 id="sheetTitle">予定を追加</h2>
+  <div class="row" id="scopeRow" style="display:none"><label class="fl">変更範囲</label>
+    <div class="seg">
+      <button id="scope-one" class="sel" onclick="setScope('one')">この日だけ</button>
+      <button id="scope-all" onclick="setScope('all')">毎週すべて</button>
+    </div>
+  </div>
+  <div class="scopehint" id="scopeHint" style="display:none"></div>
   <div class="row"><label class="fl">タイトル</label><input type="text" id="f-title" placeholder="例：塾（笠岡）"></div>
   <div class="row"><label class="fl">日付</label><input type="date" id="f-date"></div>
+  <div class="row" id="repRow"><label class="fl">くり返し</label>
+    <div class="seg">
+      <button id="rep-once" class="sel" onclick="setRepeat(false)">1回だけ</button>
+      <button id="rep-week" onclick="setRepeat(true)">🔁 毎週</button>
+    </div>
+  </div>
+  <div id="repeatBox" style="display:none">
+    <div class="row"><label class="fl">曜日</label><div class="dowpick" id="dowpick"></div></div>
+    <div class="row"><label class="fl">終了日</label><input type="date" id="f-until"><span class="hint">空欄＝ずっと続く</span></div>
+  </div>
   <div class="row"><label class="fl">時間</label><input type="time" id="f-start" onchange="updateDepartPreview()"><span>〜</span><input type="time" id="f-end"></div>
   <div class="row"><label class="fl">マーカー</label><div class="swpick" id="swpick"></div></div>
   <div class="row"><label class="fl">略号</label>
@@ -268,25 +297,21 @@ const DOWS = ["MON","TUE","WED","THU","FRI","SAT","SUN"];
 const MNAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 
 /* ================= データ ================= */
-const LS = "techo-mock-v4"; // 日付●印対応版（旧バージョンのデータは初期化される）
+const LS = "techo-mock-v5"; // 毎週くり返し対応版（旧バージョンのデータは初期化される）
 let store = JSON.parse(localStorage.getItem(LS) || "null");
 if (!store) {
-  // サンプル週: 2026-05-04(月)〜05-10(日) — 実際の手帳の使い方を模したダミー
+  // サンプル週: 2026-05-04(月)〜05-10(日) — 部活・塾・バイトなど習い事は「毎週くり返し」で登録済み
   store = { events: [
-    ev("2026-05-04","部活","blue","08:30","12:00",{depart:"07:50",notify:1}),
-    ev("2026-05-04","散歩","green","17:30","18:00",{badge:"サ"}),
+    rev("2026-05-04","部活","blue",[0,3],"08:30","12:00",{depart:"07:50",notify:1}),       // 毎週 月・木
+    rev("2026-05-04","散歩","green",[0,1,2],null,null,{allday:1,badge:"サ"}),              // 毎週 月〜水
+    rev("2026-05-04","塾（笠岡）","blue",[1,4],"19:30","21:30",{depart:"19:00",notify:1}), // 毎週 火・金
+    rev("2026-05-04","バイト","purple",[2],"21:00","24:00",{}),                            // 毎週 水
+    rev("2026-05-04","英検対策","pink",[4],"17:00","18:00",{badge:"英"}),                  // 毎週 金
     ev("2026-05-05","こどもの日おでかけ","red",null,null,{allday:1}),
-    ev("2026-05-05","散歩","green",null,null,{allday:1,badge:"サ"}),
-    ev("2026-05-05","塾（笠岡）","blue","19:30","21:30",{depart:"19:00",notify:1}),
     ev("2026-05-06","総会・打合せ","orange","10:00","12:00",{}),
-    ev("2026-05-06","散歩","green",null,null,{allday:1,badge:"サ"}),
     ev("2026-05-06","メルカリ発送","yellow","19:00","20:00",{badge:"メ"}),
-    ev("2026-05-06","バイト","purple","21:00","24:00",{}),
-    ev("2026-05-07","部活","blue","08:30","12:00",{depart:"07:50",notify:1}),
     ev("2026-05-07","歯医者","green","16:30","17:30",{}),
     ev("2026-05-08","面接","yellow","11:00","12:00",{red:1}),
-    ev("2026-05-08","英検対策","pink","17:00","18:00",{badge:"英"}),
-    ev("2026-05-08","塾（笠岡）","blue","19:30","21:30",{depart:"19:00",notify:1}),
     ev("2026-05-09","試合（大会）","blue","09:00","13:00",{depart:"08:00",notify:1,red:1}),
     ev("2026-05-09","美容院","orange","10:00","11:30",{}),   // ← 試合とかぶり表示のデモ
     ev("2026-05-09","ピアノ発表会","pink","14:00","16:00",{depart:"13:15",notify:1}),
@@ -309,7 +334,18 @@ function cycleMark(evn, ds){ // 無印→赤→青→緑→無印 の順にタ�
   save(); render();
 }
 function ev(date,title,marker,start,end,o){ return { id:Math.random().toString(36).slice(2), date,title,marker,start,end, depart:o.depart||null, notify:!!o.notify, red:!!o.red, allday:!!o.allday, badge:o.badge||null }; }
+function rev(date,title,marker,days,start,end,o){ const e=ev(date,title,marker,start,end,o); e.repeat={ days, until:o.until||null, skip:{} }; return e; }
 function save(){ localStorage.setItem(LS, JSON.stringify(store)); }
+/* 毎週くり返しの展開: その日に予定があるか判定 */
+function occursOn(e, ds){
+  if(!e.repeat) return e.date===ds;
+  if(ds < e.date) return false;                          // 開始日より前
+  if(e.repeat.until && ds > e.repeat.until) return false; // 終了日を過ぎた
+  if(e.repeat.skip && e.repeat.skip[ds]) return false;    // リスケ・削除でこの日だけ外した
+  const d=new Date(ds);
+  return e.repeat.days.includes((d.getDay()+6)%7);        // 月=0〜日=6
+}
+const eventsOn = ds => store.events.filter(e=>occursOn(e,ds));
 
 /* ================= 状態 ================= */
 let tab = "week";
@@ -350,7 +386,7 @@ function renderWeek(){
   const days = (page===0 ? [0,1,2] : [3,4,5,6]).map(i=>addD(mon,i));
   const wrap = document.getElementById("weekPage");
   const H = (HOUR_E-HOUR_S)*HPX;
-  const maxAllday = Math.max(0, ...days.map(d=>store.events.filter(e=>e.date===fmt(d)&&e.allday).length));
+  const maxAllday = Math.max(0, ...days.map(d=>eventsOn(fmt(d)).filter(e=>e.allday).length));
   const headH = 46 + maxAllday*18;
 
   let axis = `<div class="timeaxis" style="height:${H+headH}px">`;
@@ -361,8 +397,8 @@ function renderWeek(){
   for (const d of days){
     const ds = fmt(d), dow = (d.getDay()+6)%7;
     const hol = HOLIDAYS[ds];
-    const dayEvents = store.events.filter(e=>e.date===ds && !e.allday && e.start);
-    const alldays  = store.events.filter(e=>e.date===ds && e.allday);
+    const dayEvents = eventsOn(ds).filter(e=>!e.allday && e.start);
+    const alldays  = eventsOn(ds).filter(e=>e.allday);
     // かぶり判定 → レーン割当（重なった予定は横に並べる）
     const sorted=[...dayEvents].sort((a,b)=>mins(a.start)-mins(b.start));
     const lanes=[];
@@ -377,8 +413,8 @@ function renderWeek(){
       <span class="dnum">${d.getDate()}</span> <span class="dow">${DOWS[dow]}</span>${store.daymarks[ds]?`<span class="dm ${store.daymarks[ds]}"></span>`:""}
       ${hol?`<span class="hname">${hol}</span>`:""}
       ${alldays.map(e=>e.badge
-        ? `<div class="allday" style="background:#fff;color:${PEN[e.marker]};border:1px solid ${PEN[e.marker]}" onclick="openSheet('${e.id}')">◯${esc(e.badge)} ${esc(e.title)}</div>`
-        : `<div class="allday" style="background:${MARKERS[e.marker]}" onclick="openSheet('${e.id}')">${esc(e.title)}</div>`).join("")}
+        ? `<div class="allday" style="background:#fff;color:${PEN[e.marker]};border:1px solid ${PEN[e.marker]}" onclick="openSheet('${e.id}','${ds}')">${e.repeat?"🔁":""}◯${esc(e.badge)} ${esc(e.title)}</div>`
+        : `<div class="allday" style="background:${MARKERS[e.marker]}" onclick="openSheet('${e.id}','${ds}')">${e.repeat?"🔁":""}${esc(e.title)}</div>`).join("")}
     </div>`;
 
     let bars = "";
@@ -386,8 +422,8 @@ function renderWeek(){
       const top=(mins(e.start)/60-HOUR_S)*HPX, h=Math.max(18,(mins(e.end)-mins(e.start))/60*HPX);
       const w=100/nl, left=e._lane*w;
       bars += `${e.depart?`<div class="depart" style="top:${top-14}px;left:${left}%;width:${w-3}%">🏠${e.depart}発</div>`:""}
-      <div class="bar" style="top:${top}px;height:${h}px;left:${left}%;width:${w-3}%;background:${MARKERS[e.marker]}66;border-left:5px solid ${MARKERS[e.marker]}" onclick="event.stopPropagation();openSheet('${e.id}')">
-        <span class="lbl ${e.red?"red":""}">${e.notify?"🔔":""}${esc(e.title)}</span>
+      <div class="bar" style="top:${top}px;height:${h}px;left:${left}%;width:${w-3}%;background:${MARKERS[e.marker]}66;border-left:5px solid ${MARKERS[e.marker]}" onclick="event.stopPropagation();openSheet('${e.id}','${ds}')">
+        <span class="lbl ${e.red?"red":""}">${e.repeat?"🔁":""}${e.notify?"🔔":""}${esc(e.title)}</span>
       </div>`;
     }
     cols += `<div class="daycol">${head}<div class="slotarea" style="height:${H}px" onclick="tapSlot(event,'${ds}')">${bars}</div></div>`;
@@ -421,7 +457,7 @@ function renderMonth(){
     let row = `<td class="wkcell">WEEKLY TO DO</td>`;
     for(let i=0;i<7;i++){
       const ds=fmt(d), other=d.getMonth()!==m, hol=HOLIDAYS[ds], dow=i;
-      const evs=store.events.filter(e=>e.date===ds)
+      const evs=eventsOn(ds)
         .sort((a,b)=>(a.allday?-1:1)-(b.allday?-1:1) || (a.start&&b.start?mins(a.start)-mins(b.start):0));
       const trim=t=>t.replace(/^0/,"").replace(/:00$/,"");
       const rng=e=>e.start?`${trim(e.start)}-${trim(e.end==="24:00"?"0:00":e.end)} `:"";
@@ -463,6 +499,49 @@ function renderSettings(){
 
 /* ================= 入力シート ================= */
 let selMarker="blue";
+let repMode=false, repDays=[], editScope="one", editOccDate=null;
+const DOWJP=["月","火","水","木","金","土","日"];
+const jpDate = ds => { const d=new Date(ds); return `${d.getMonth()+1}月${d.getDate()}日`; };
+function setRepeat(on){
+  repMode=on;
+  document.getElementById("rep-once").classList.toggle("sel",!on);
+  document.getElementById("rep-week").classList.toggle("sel",on);
+  if(on && !repDays.length){ // 初期値: 選んでいる日付の曜日
+    const dv=document.getElementById("f-date").value;
+    if(dv) repDays=[(new Date(dv).getDay()+6)%7];
+  }
+  refreshRepeatUI();
+}
+function toggleDow(i){
+  const p=repDays.indexOf(i);
+  if(p>=0) repDays.splice(p,1); else repDays.push(i);
+  renderDowPick();
+}
+function renderDowPick(){
+  document.getElementById("dowpick").innerHTML = DOWJP.map((n,i)=>
+    `<button class="${repDays.includes(i)?"sel":""}" onclick="toggleDow(${i})">${n}</button>`).join("");
+}
+function setScope(s){
+  editScope=s;
+  document.getElementById("scope-one").classList.toggle("sel",s==="one");
+  document.getElementById("scope-all").classList.toggle("sel",s==="all");
+  refreshRepeatUI();
+}
+function refreshRepeatUI(){
+  const e = editId ? store.events.find(x=>x.id===editId) : null;
+  const isRep = !!(e && e.repeat);
+  document.getElementById("repRow").style.display = isRep ? "none" : "flex";
+  document.getElementById("scopeRow").style.display = isRep ? "flex" : "none";
+  const hint = document.getElementById("scopeHint");
+  hint.style.display = isRep ? "block" : "none";
+  if(isRep) hint.textContent = editScope==="one"
+    ? "この日の分だけ変更・削除します（他の週はそのまま）"
+    : "毎週のくり返し全体を変更・削除します";
+  const showBox = isRep ? editScope==="all" : repMode;
+  document.getElementById("repeatBox").style.display = showBox ? "block" : "none";
+  if(showBox) renderDowPick();
+  document.getElementById("f-date").disabled = isRep && editScope==="all";
+}
 const DEPART_OPTS = [5,10,15,20,30,40,50,60,90]; // 「開始◯分前に出発」の選択肢
 const rawMins = t => { const [h,m]=t.split(":").map(Number); return h*60+m; };
 function calcDepart(start, n){
@@ -483,10 +562,20 @@ function renderSwatches(){
 function openSheet(id, date, time){
   editId = id||null;
   const e = id ? store.events.find(x=>x.id===id) : null;
-  document.getElementById("sheetTitle").textContent = e?"予定を編集":"予定を追加";
+  const isRep = !!(e && e.repeat);
+  editOccDate = isRep ? (date || e.date) : null;
+  editScope = "one";
+  repMode = isRep;
+  repDays = isRep ? [...e.repeat.days] : [];
+  document.getElementById("f-until").value = isRep ? (e.repeat.until||"") : "";
+  document.getElementById("rep-once").classList.toggle("sel",!repMode);
+  document.getElementById("rep-week").classList.toggle("sel",repMode);
+  document.getElementById("scope-one").classList.add("sel");
+  document.getElementById("scope-all").classList.remove("sel");
+  document.getElementById("sheetTitle").textContent = e?(isRep?"🔁 毎週の予定を編集":"予定を編集"):"予定を追加";
   document.getElementById("delBtn").style.display = e?"block":"none";
   document.getElementById("f-title").value = e?e.title:"";
-  document.getElementById("f-date").value = e?e.date:(date||fmt(cur));
+  document.getElementById("f-date").value = e?(isRep?editOccDate:e.date):(date||fmt(cur));
   document.getElementById("f-start").value = e?(e.start||""):(time||"");
   document.getElementById("f-end").value = e?(e.end==="24:00"?"00:00":(e.end||"")):"";
   // 出発プルダウン: 既存予定は「開始−出発」の差から◯分前を復元
@@ -502,6 +591,7 @@ function openSheet(id, date, time){
   document.getElementById("f-allday").checked = !!(e&&e.allday);
   selMarker = e?e.marker:"blue";
   renderSwatches();
+  refreshRepeatUI();
   updateDepartPreview();
   document.getElementById("sheet").classList.add("open");
   document.getElementById("overlay").classList.add("show");
@@ -515,22 +605,51 @@ function saveEvent(){
   if(end==="00:00") end="24:00";
   if(!allday && (!start||!end)){ alert("時間を入力するか「終日」にしてください"); return; }
   if(!allday && mins(end)<=mins(start)){ alert("終了時間は開始より後にしてください"); return; }
-  const obj={ id:editId||Math.random().toString(36).slice(2),
-    date:document.getElementById("f-date").value, title, marker:selMarker,
+  const base={ title, marker:selMarker,
     start:allday?null:start, end:allday?null:end,
     depart:(!allday && start && document.getElementById("f-depart-min").value)
       ? calcDepart(start, +document.getElementById("f-depart-min").value) : null,
     badge:document.getElementById("f-badge").value.trim()||null,
     notify:document.getElementById("f-notify").checked,
     red:document.getElementById("f-red").checked, allday };
-  const i=store.events.findIndex(x=>x.id===obj.id);
-  if(i>=0) store.events[i]=obj; else store.events.push(obj);
+  const rid = ()=>Math.random().toString(36).slice(2);
+  const e0 = editId ? store.events.find(x=>x.id===editId) : null;
+  if (e0 && e0.repeat){
+    if (editScope==="all"){ // 毎週すべて変更（曜日・終了日も更新。開始日はそのまま）
+      if(!repDays.length){ alert("くり返す曜日を選んでください"); return; }
+      Object.assign(e0, base);
+      e0.repeat.days = [...repDays].sort((a,b)=>a-b);
+      e0.repeat.until = document.getElementById("f-until").value||null;
+    } else { // この日だけ変更（リスケ）: くり返しからこの日を外し、単発として保存
+      e0.repeat.skip = e0.repeat.skip||{};
+      e0.repeat.skip[editOccDate] = 1;
+      store.events.push({ id:rid(), date:document.getElementById("f-date").value, ...base });
+    }
+  } else {
+    if (repMode && !repDays.length){ alert("くり返す曜日を選んでください"); return; }
+    const obj={ id:editId||rid(), date:document.getElementById("f-date").value, ...base };
+    if (repMode) obj.repeat = { days:[...repDays].sort((a,b)=>a-b), until:document.getElementById("f-until").value||null, skip:{} };
+    const i=store.events.findIndex(x=>x.id===obj.id);
+    if(i>=0) store.events[i]=obj; else store.events.push(obj);
+  }
   save(); closeSheet(); render();
 }
 function deleteEvent(){
   if(!editId) return;
-  if(!confirm("この予定を削除しますか？")) return;
-  store.events = store.events.filter(x=>x.id!==editId);
+  const e0 = store.events.find(x=>x.id===editId);
+  if (e0 && e0.repeat){
+    if (editScope==="one"){
+      if(!confirm(`${jpDate(editOccDate)}の分だけ削除しますか？\n（他の週のくり返しは残ります）`)) return;
+      e0.repeat.skip = e0.repeat.skip||{};
+      e0.repeat.skip[editOccDate] = 1;
+    } else {
+      if(!confirm("毎週のくり返し予定をすべて削除しますか？")) return;
+      store.events = store.events.filter(x=>x.id!==editId);
+    }
+  } else {
+    if(!confirm("この予定を削除しますか？")) return;
+    store.events = store.events.filter(x=>x.id!==editId);
+  }
   save(); closeSheet(); render();
 }
 

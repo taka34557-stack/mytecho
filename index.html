@@ -810,7 +810,7 @@ document.addEventListener("touchend",e=>{
 },{passive:true});
 
 /* ================= Googleカレンダー連携（フェーズ2） ================= */
-const GCAL_CLIENT_ID = ""; // ← OAuthクライアントIDをここに設定（空の間、この機能は「準備中」表示で休眠）
+const GCAL_CLIENT_ID = "410541871791-bok50oheek16df8grofccf9gk2k56f01.apps.googleusercontent.com";
 const GCAL_SCOPE = "https://www.googleapis.com/auth/calendar";
 function GC(){ return store.gcal || null; }
 let gToken = sessionStorage.getItem("gcal-token") || null;

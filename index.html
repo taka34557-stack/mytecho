@@ -162,6 +162,8 @@
   .legendrow{ display:flex; align-items:center; gap:10px; padding:8px 0; border-bottom:1px dotted var(--line); }
   .legendrow .sw{ width:26px; height:26px; border-radius:6px; flex:none; }
   .legendrow input{ flex:1; border:1px solid var(--line); border-radius:6px; padding:8px; font-size:16px; background:#fff; }
+  .legendrow .lockbtn{ flex:none; width:40px; height:36px; border:1px solid var(--line); border-radius:6px; background:#fff; font-size:16px; }
+  .legendrow .lockbtn.on{ background:#fdeeec; border-color:#e0b4ac; }
   .note{ font-size:11px; color:#8a8478; margin-top:14px; line-height:1.7; }
   .setbtn{ flex:1; padding:12px; border:1px solid var(--line); border-radius:8px; background:#fff; font-size:14px; color:var(--ink); }
 
@@ -627,9 +629,13 @@ function gotoWeek(ds){ cur = new Date(ds); const dow=(cur.getDay()+6)%7; page = 
 
 /* ================= 設定（色の名前） ================= */
 function renderSettings(){
+  // 共有中は色ごとの🔒（この色の予定は登録した本人だけが変更・削除できる）を表示
+  const lockb = k => SH()
+    ? `<button class="lockbtn ${shLocks()[k]?"on":""}" onclick="toggleLock('${k}')" title="この色の予定を保護">${shLocks()[k]?"🔒":"🔓"}</button>` : "";
   document.getElementById("legend").innerHTML = Object.keys(MARKERS).map(k=>
     `<div class="legendrow"><div class="sw" style="background:${MARKERS[k]}"></div>
-     <input value="${esc(store.names[k]||"")}" placeholder="名前を付ける" onchange="store.names['${k}']=this.value;save();shareNamesPush()"></div>`).join("");
+     <input value="${esc(store.names[k]||"")}" placeholder="名前を付ける" onchange="store.names['${k}']=this.value;save();shareNamesPush()">${lockb(k)}</div>`).join("")
+    + (SH() ? `<p class="note" style="margin-top:6px">🔒を付けた色の予定は、<b>登録した本人だけ</b>が変更・削除できます（例：仕事の色に🔒）。設定は家族全員に反映されます。</p>` : "");
   renderShareBox();
   renderGcalBox();
 }
@@ -710,7 +716,7 @@ function openSheet(id, date, time){
   document.getElementById("scope-one").classList.add("sel");
   document.getElementById("scope-all").classList.remove("sel");
   document.getElementById("sheetTitle").textContent = (e?(isRep?"🔁 毎週の予定を編集":"予定を編集"):"予定を追加")
-    + (SH() && e && e.by ? `（${e.by}さんが登録）` : "");
+    + (SH() && e && e.by ? `（${(shLocks()[e.marker] && !shIsMine(e)) ? "🔒 " : ""}${e.by}さんが登録）` : "");
   document.getElementById("delBtn").style.display = e?"block":"none";
   document.getElementById("f-title").value = e?e.title:"";
   document.getElementById("f-date").value = e?(isRep?editOccDate:e.date):(date||fmt(cur));
@@ -856,6 +862,7 @@ function shareListen(){
     const g = snap.data(); if (!g || !SH()) return;
     if (g.names) store.names = {...store.names, ...g.names};
     if (g.name) store.share.name = g.name;
+    store.share.locks = g.locks || {}; // 色ロック設定も全員で共有
     save();
     if (tab==="settings") renderSettings();
   }, _e=>{});
@@ -869,6 +876,28 @@ function shareNamesPush(){ // マーカー名の変更を共有（連続入力�
   if (!SH() || !shReady) return;
   clearTimeout(shNamesTimer);
   shNamesTimer = setTimeout(()=>{ fbApi.fs.setDoc(shRef(), {names: store.names}, {merge:true}).catch(()=>{}); }, 600);
+}
+/* --- 色ロック（🔒の色の予定は、登録した本人だけが変更・削除できる） --- */
+const shLocks = ()=> (SH() && SH().locks) || {};
+function shIsMine(e){ // 自分が登録した予定か（古い予定はuidが無いので名前で判定）
+  if (e.byUid) return e.byUid === myUid;
+  if (e.by) return e.by === (SH().myName||"");
+  return true;
+}
+function shGuardEdit(e0){ // 変更・削除前のチェック。false=中止
+  if (!e0 || shIsMine(e0)) return true;
+  if (shLocks()[e0.marker]){
+    alert(`🔒 これは${e0.by||"ほかの人"}さんが登録した「${store.names[e0.marker]||"この色"}」の予定です。\n登録した本人だけが変更・削除できます。`);
+    return false;
+  }
+  return true;
+}
+function toggleLock(k){
+  if (!SH()) return;
+  const locks = {...shLocks()};
+  if (locks[k]) delete locks[k]; else locks[k] = true;
+  store.share.locks = locks; save(); renderSettings();
+  if (shReady){ try{ fbApi.fs.updateDoc(shRef(), {locks}).catch(()=>{}); }catch(_e){} }
 }
 function makeCode(){ // まぎらわしい文字(0/O/1/I/L)を除いた8文字
   const A = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
@@ -885,7 +914,7 @@ function shareGuard(){
 function shareCopyLocal(){ // 手元の予定を共有手帳へコピー
   if (!store.events.length) return;
   if (!confirm(`今この手帳に入っている予定 ${store.events.length} 件を共有手帳にコピーしますか？`)) return;
-  for (const e of store.events) fbApi.fs.setDoc(shEvRef(e.id), {...e, by:SH().myName||""}).catch(()=>{});
+  for (const e of store.events) fbApi.fs.setDoc(shEvRef(e.id), {...e, by:SH().myName||"", byUid:myUid}).catch(()=>{});
 }
 async function shareCreate(){
   if (!shareGuard()) return;
@@ -944,17 +973,21 @@ function shareSaveFromSheet(base){
   const untilV = document.getElementById("f-until").value || null;
   const dateV = document.getElementById("f-date").value;
   const e0 = editId ? shEvents.find(x=>x.id===editId) : null;
+  if (!shGuardEdit(e0)) return;
+  if (e0 && !shIsMine(e0) && e0.by){ // 🔒なし色でも、他の人の予定は名前入りで確認
+    if (!confirm(`⚠️ これは${e0.by}さんが登録した予定です。\n変更して保存しますか？`)) return;
+  }
   if (e0 && e0.repeat){
     if (editScope==="all"){ // 毎週すべて変更（開始日はそのまま）
       if(!repDays.length){ alert("くり返す曜日を選んでください"); return; }
       put({ ...e0, ...base, repeat:{ ...e0.repeat, days:[...repDays].sort((a,b)=>a-b), until:untilV } });
     } else { // この日だけ変更（リスケ）: くり返しからこの日を外し、単発として保存
       put({ ...e0, repeat:{ ...e0.repeat, skip:{ ...(e0.repeat.skip||{}), [editOccDate]:1 } } });
-      put({ id:rid(), date:dateV, ...base, by:SH().myName||"" });
+      put({ id:rid(), date:dateV, ...base, by:SH().myName||"", byUid:myUid });
     }
   } else {
     if (repMode && !repDays.length){ alert("くり返す曜日を選んでください"); return; }
-    const obj = { id:editId||rid(), date:dateV, ...base, by:(e0&&e0.by)||SH().myName||"" };
+    const obj = { id:editId||rid(), date:dateV, ...base, by:(e0&&e0.by)||SH().myName||"", byUid:(e0&&e0.byUid)||myUid };
     if (repMode) obj.repeat = { days:[...repDays].sort((a,b)=>a-b), until:untilV, skip:{} };
     put(obj);
   }
@@ -962,11 +995,13 @@ function shareSaveFromSheet(base){
 }
 function shareDeleteFromSheet(){
   const e0 = shEvents.find(x=>x.id===editId); if(!e0) return;
+  if (!shGuardEdit(e0)) return;
+  const who = (!shIsMine(e0) && e0.by) ? `⚠️ ${e0.by}さんが登録した予定です。\n` : "";
   if (e0.repeat && editScope==="one"){
-    if(!confirm(`${jpDate(editOccDate)}の分だけ削除しますか？\n（他の週のくり返しは残ります）`)) return;
+    if(!confirm(who + `${jpDate(editOccDate)}の分だけ削除しますか？\n（他の週のくり返しは残ります）`)) return;
     fbApi.fs.setDoc(shEvRef(e0.id), { ...e0, repeat:{ ...e0.repeat, skip:{ ...(e0.repeat.skip||{}), [editOccDate]:1 } } }).catch(()=>{});
   } else {
-    if(!confirm(e0.repeat ? "毎週のくり返し予定をすべて削除しますか？" : "この予定を削除しますか？")) return;
+    if(!confirm(who + (e0.repeat ? "毎週のくり返し予定をすべて削除しますか？" : "この予定を削除しますか？"))) return;
     fbApi.fs.deleteDoc(shEvRef(e0.id)).catch(()=>{});
   }
   closeSheet(); render();

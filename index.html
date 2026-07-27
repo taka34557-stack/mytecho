@@ -262,6 +262,8 @@
     <p class="note">・iPhone: Safariでこのページを開き、共有ボタン（□↑）→「ホーム画面に追加」。<br>
     ・Android: Chromeのメニュー（︙）→「ホーム画面に追加」。<br>
     ・追加すると普通のアプリと同じように起動でき、電波のない場所でも使えます。</p>
+    <h3 style="font-size:14px;margin:18px 0 6px">みんなで共有（家族と同じ手帳を使う）</h3>
+    <div id="shareBox"></div>
     <h3 style="font-size:14px;margin:18px 0 6px">Googleカレンダー連携（家族共有・通知）</h3>
     <div id="gcalBox"></div>
     <p class="note">
@@ -271,6 +273,7 @@
       ・🔁マークの付いた毎週の予定をタップすると<b>「この日だけ」「毎週すべて」</b>を選んで変更・削除できます。リスケは「この日だけ」で日時を直せば他の週はそのままです。<br>
       ・週間ページ下の<b>DAILY TO DO</b>は日ごと、<b>WEEKLY TO DO</b>は週ごとのやることリストです。入力欄から追加、チェックで完了、✕で削除。残りは前の日／前の週から1タップで引き継げます。<br>
       ・週間の日付（例: 4 MON）をタップするとその日のDAILY TO DOに移動します。日付の横の<b>□数字</b>はその日の残り件数です。<br>
+      ・上の<b>「みんなで共有」</b>で共有手帳を作り、<b>共有コード</b>を家族に送ると、全員で同じ予定を見て・書き込めます。誰かが入れた予定はみんなのスマホにすぐ反映されます（TODO・メモは自分専用のまま）。<br>
       ・上の「Googleカレンダー連携」から連携すると、予定がGoogleカレンダーに保存され、🔔や🏠出発の通知がGoogleカレンダーアプリから届きます。家族共有もGoogleカレンダーの共有機能でできます。
     </p>
   </section>
@@ -394,7 +397,8 @@ function occursOn(e, ds){
   const d=new Date(ds);
   return e.repeat.days.includes((d.getDay()+6)%7);        // 月=0〜日=6
 }
-function eventsOn(ds){ // Google連携中はGoogleカレンダーのキャッシュから、通常は端末内データから
+function eventsOn(ds){ // 共有中は共有手帳、Google連携中はGoogleカレンダーのキャッシュ、通常は端末内データから
+  if (SH()) return shEvents.filter(e=>occursOn(e,ds));
   if (GC()){
     const seen={}, out=[];
     for (const k in gcache){
@@ -625,7 +629,8 @@ function gotoWeek(ds){ cur = new Date(ds); const dow=(cur.getDay()+6)%7; page = 
 function renderSettings(){
   document.getElementById("legend").innerHTML = Object.keys(MARKERS).map(k=>
     `<div class="legendrow"><div class="sw" style="background:${MARKERS[k]}"></div>
-     <input value="${esc(store.names[k]||"")}" placeholder="名前を付ける" onchange="store.names['${k}']=this.value;save()"></div>`).join("");
+     <input value="${esc(store.names[k]||"")}" placeholder="名前を付ける" onchange="store.names['${k}']=this.value;save();shareNamesPush()"></div>`).join("");
+  renderShareBox();
   renderGcalBox();
 }
 
@@ -704,7 +709,8 @@ function openSheet(id, date, time){
   document.getElementById("rep-week").classList.toggle("sel",repMode);
   document.getElementById("scope-one").classList.add("sel");
   document.getElementById("scope-all").classList.remove("sel");
-  document.getElementById("sheetTitle").textContent = e?(isRep?"🔁 毎週の予定を編集":"予定を編集"):"予定を追加";
+  document.getElementById("sheetTitle").textContent = (e?(isRep?"🔁 毎週の予定を編集":"予定を編集"):"予定を追加")
+    + (SH() && e && e.by ? `（${e.by}さんが登録）` : "");
   document.getElementById("delBtn").style.display = e?"block":"none";
   document.getElementById("f-title").value = e?e.title:"";
   document.getElementById("f-date").value = e?(isRep?editOccDate:e.date):(date||fmt(cur));
@@ -745,6 +751,7 @@ function saveEvent(){
     badge:document.getElementById("f-badge").value.trim()||null,
     notify:document.getElementById("f-notify").checked,
     red:document.getElementById("f-red").checked, allday };
+  if (SH()){ shareSaveFromSheet(base); return; }
   if (GC()){ gcalSaveFromSheet(base); return; }
   const rid = ()=>Math.random().toString(36).slice(2);
   const e0 = editId ? findEv(editId) : null;
@@ -770,6 +777,7 @@ function saveEvent(){
 }
 function deleteEvent(){
   if(!editId) return;
+  if (SH()){ shareDeleteFromSheet(); return; }
   if (GC()){ gcalDeleteFromSheet(); return; }
   const e0 = store.events.find(x=>x.id===editId);
   if (e0 && e0.repeat){
@@ -808,6 +816,183 @@ document.addEventListener("touchend",e=>{
   else    { if(page===1) page=0; else { cur=addD(cur,-7); page=1; } }
   render();
 },{passive:true});
+
+/* ================= みんなで共有（フェーズ3・Firebase） ================= */
+// Firebaseの設定を貼り付けると「みんなで共有」が使えるようになる（07_共有機能Firebase設定手順.md 参照）
+window.FB_CONFIG = {
+  apiKey: "AIzaSyBtBX67QQ90jXWkFuFue5h7QU3trOf0M5Y",
+  authDomain: "mytecho-dd2b7.firebaseapp.com",
+  projectId: "mytecho-dd2b7",
+  storageBucket: "mytecho-dd2b7.firebasestorage.app",
+  messagingSenderId: "663521261624",
+  appId: "1:663521261624:web:30133236ff8fdbf1d00ecd"
+};
+function SH(){ return store.share || null; }
+let fbApi = null, myUid = null, shReady = false, shUnsub = null, shUnsubG = null, shNamesTimer = null;
+let shEvents = [];
+try{ shEvents = JSON.parse(localStorage.getItem("techo-shcache") || "[]"); }catch(_e){ shEvents = []; }
+
+function shareBoot(api){ // Firebase読み込み完了後にモジュール側から呼ばれる
+  fbApi = api;
+  api.onAuthStateChanged(api.auth, u=>{
+    if (!u){ api.signInAnonymously(api.auth).catch(()=>{}); return; }
+    myUid = u.uid; shReady = true;
+    if (SH()) shareListen();
+    if (tab==="settings") renderSettings();
+  });
+}
+const shRef = ()=> fbApi.fs.doc(fbApi.db, "groups", SH().code);
+const shEvRef = id => fbApi.fs.doc(fbApi.db, "groups", SH().code, "events", id);
+const shTimeout = ms => new Promise((_,rej)=>setTimeout(()=>rej(new Error("timeout")), ms));
+function shareListen(){
+  if (!shReady || !SH() || shUnsub) return;
+  const {fs, db} = fbApi;
+  shUnsub = fs.onSnapshot(fs.collection(db, "groups", SH().code, "events"), snap=>{
+    shEvents = snap.docs.map(d=>d.data());
+    try{ localStorage.setItem("techo-shcache", JSON.stringify(shEvents)); }catch(_e){}
+    render();
+  }, _e=>{});
+  shUnsubG = fs.onSnapshot(shRef(), snap=>{ // グループ名・マーカー名の共有
+    const g = snap.data(); if (!g || !SH()) return;
+    if (g.names) store.names = {...store.names, ...g.names};
+    if (g.name) store.share.name = g.name;
+    save();
+    if (tab==="settings") renderSettings();
+  }, _e=>{});
+}
+function shareStop(){
+  if (shUnsub){ shUnsub(); shUnsub=null; }
+  if (shUnsubG){ shUnsubG(); shUnsubG=null; }
+  shEvents = []; localStorage.removeItem("techo-shcache");
+}
+function shareNamesPush(){ // マーカー名の変更を共有（連続入力はまとめて送る）
+  if (!SH() || !shReady) return;
+  clearTimeout(shNamesTimer);
+  shNamesTimer = setTimeout(()=>{ fbApi.fs.setDoc(shRef(), {names: store.names}, {merge:true}).catch(()=>{}); }, 600);
+}
+function makeCode(){ // まぎらわしい文字(0/O/1/I/L)を除いた8文字
+  const A = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+  const a = new Uint32Array(8); crypto.getRandomValues(a);
+  return [...a].map(n=>A[n%A.length]).join("");
+}
+const codeDisp = c => c.slice(0,4)+"-"+c.slice(4);
+function shareGuard(){
+  if (GC()){ alert("Googleカレンダー連携を使用中です。\n「みんなで共有」を使うには、先に下の「連携を解除する」を押してください。"); return false; }
+  if (!window.FB_CONFIG){ alert("準備中です。次の更新で使えるようになります。"); return false; }
+  if (!shReady){ alert("接続の準備中です。通信環境を確認して、数秒後にもう一度お試しください。"); return false; }
+  return true;
+}
+function shareCopyLocal(){ // 手元の予定を共有手帳へコピー
+  if (!store.events.length) return;
+  if (!confirm(`今この手帳に入っている予定 ${store.events.length} 件を共有手帳にコピーしますか？`)) return;
+  for (const e of store.events) fbApi.fs.setDoc(shEvRef(e.id), {...e, by:SH().myName||""}).catch(()=>{});
+}
+async function shareCreate(){
+  if (!shareGuard()) return;
+  const gname = (prompt("共有手帳の名前を入力してください（例：田中家の手帳）","わが家の手帳")||"").trim();
+  if (!gname) return;
+  const myName = (prompt("あなたの名前を入力してください（家族に表示されます）","")||"").trim();
+  if (!myName) return;
+  const code = makeCode();
+  try{
+    const {fs, db} = fbApi;
+    await Promise.race([
+      fs.setDoc(fs.doc(db,"groups",code), { name:gname, names:store.names, members:{[myUid]:{name:myName}}, created:new Date().toISOString() }),
+      shTimeout(10000)]);
+    store.share = { code, name:gname, myName }; save();
+    shareCopyLocal();
+    shareListen(); renderSettings();
+    alert(`共有手帳「${gname}」を作りました！\n\n共有コード： ${codeDisp(code)}\n\nこのコードをLINEなどで家族に送ってください。\n（コードは設定画面でいつでも確認できます）`);
+  }catch(_e){ alert("作成できませんでした。通信環境を確認してもう一度お試しください。"); }
+}
+async function shareJoin(){
+  if (!shareGuard()) return;
+  const code = (prompt("共有コードを入力してください（例：ABCD-EFGH）","")||"").replace(/[^A-Za-z0-9]/g,"").toUpperCase();
+  if (!code) return;
+  if (code.length!==8){ alert("共有コードは8文字（例：ABCD-EFGH）です。\nもう一度確認してください。"); return; }
+  try{
+    const {fs, db} = fbApi;
+    const snap = await Promise.race([fs.getDoc(fs.doc(db,"groups",code)), shTimeout(10000)]);
+    if (!snap.exists()){ alert("そのコードの共有手帳が見つかりませんでした。\nコードをもう一度確認してください。"); return; }
+    const g = snap.data();
+    const myName = (prompt(`「${g.name}」に参加します。\nあなたの名前を入力してください（家族に表示されます）`,"")||"").trim();
+    if (!myName) return;
+    fs.setDoc(fs.doc(db,"groups",code), {members:{[myUid]:{name:myName}}}, {merge:true}).catch(()=>{});
+    if (g.names) store.names = {...store.names, ...g.names};
+    store.share = { code, name:g.name||"共有手帳", myName }; save();
+    shareCopyLocal();
+    shareListen(); render();
+    alert(`「${SH().name}」に参加しました！`);
+  }catch(_e){ alert("参加できませんでした。通信環境を確認してもう一度お試しください。"); }
+}
+function shareLeave(){
+  if (!confirm("共有をやめますか？\n\n・共有手帳の予定は、他の家族のスマホには残ります\n・この手帳は、共有前のスマホ内の保存に戻ります")) return;
+  if (shReady && SH()){ try{ fbApi.fs.updateDoc(shRef(), {["members."+myUid]: fbApi.fs.deleteField()}).catch(()=>{}); }catch(_e){} }
+  shareStop();
+  delete store.share; save(); render();
+}
+function shareCopyCode(){
+  const t = codeDisp(SH().code);
+  if (navigator.clipboard && navigator.clipboard.writeText)
+    navigator.clipboard.writeText(t).then(()=>alert(`共有コード ${t} をコピーしました。\nLINEなどに貼り付けて送ってください。`)).catch(()=>alert(`共有コード： ${t}`));
+  else alert(`共有コード： ${t}`);
+}
+/* --- 保存・削除（共有手帳へ書き込み。電波がなくても保存され、つながった時に自動送信される） --- */
+function shareSaveFromSheet(base){
+  const put = e => fbApi.fs.setDoc(shEvRef(e.id), e).catch(()=>{});
+  const rid = ()=>Math.random().toString(36).slice(2);
+  const untilV = document.getElementById("f-until").value || null;
+  const dateV = document.getElementById("f-date").value;
+  const e0 = editId ? shEvents.find(x=>x.id===editId) : null;
+  if (e0 && e0.repeat){
+    if (editScope==="all"){ // 毎週すべて変更（開始日はそのまま）
+      if(!repDays.length){ alert("くり返す曜日を選んでください"); return; }
+      put({ ...e0, ...base, repeat:{ ...e0.repeat, days:[...repDays].sort((a,b)=>a-b), until:untilV } });
+    } else { // この日だけ変更（リスケ）: くり返しからこの日を外し、単発として保存
+      put({ ...e0, repeat:{ ...e0.repeat, skip:{ ...(e0.repeat.skip||{}), [editOccDate]:1 } } });
+      put({ id:rid(), date:dateV, ...base, by:SH().myName||"" });
+    }
+  } else {
+    if (repMode && !repDays.length){ alert("くり返す曜日を選んでください"); return; }
+    const obj = { id:editId||rid(), date:dateV, ...base, by:(e0&&e0.by)||SH().myName||"" };
+    if (repMode) obj.repeat = { days:[...repDays].sort((a,b)=>a-b), until:untilV, skip:{} };
+    put(obj);
+  }
+  closeSheet(); render();
+}
+function shareDeleteFromSheet(){
+  const e0 = shEvents.find(x=>x.id===editId); if(!e0) return;
+  if (e0.repeat && editScope==="one"){
+    if(!confirm(`${jpDate(editOccDate)}の分だけ削除しますか？\n（他の週のくり返しは残ります）`)) return;
+    fbApi.fs.setDoc(shEvRef(e0.id), { ...e0, repeat:{ ...e0.repeat, skip:{ ...(e0.repeat.skip||{}), [editOccDate]:1 } } }).catch(()=>{});
+  } else {
+    if(!confirm(e0.repeat ? "毎週のくり返し予定をすべて削除しますか？" : "この予定を削除しますか？")) return;
+    fbApi.fs.deleteDoc(shEvRef(e0.id)).catch(()=>{});
+  }
+  closeSheet(); render();
+}
+/* --- 設定タブの表示 --- */
+function renderShareBox(){
+  const box = document.getElementById("shareBox"); if (!box) return;
+  if (!window.FB_CONFIG){
+    box.innerHTML = '<p class="note" style="margin-top:4px">準備中です。次の更新で使えるようになります。</p>';
+  } else if (SH()){
+    box.innerHTML = `<p class="note" style="margin-top:4px">共有中：<b>${esc(SH().name)}</b>（あなた：${esc(SH().myName||"")}）<br>
+      共有コード：<b style="font-size:17px;letter-spacing:2px">${codeDisp(SH().code)}</b><br>
+      このコードを送ると、家族も同じ手帳に参加できます。予定はみんなのスマホに自動でそろいます。</p>
+      <div style="display:flex;gap:10px;margin-top:6px">
+        <button class="setbtn" onclick="shareCopyCode()">📋 コードをコピー</button>
+        <button class="setbtn" onclick="shareLeave()">共有をやめる</button>
+      </div>`;
+  } else {
+    box.innerHTML = `<p class="note" style="margin-top:4px">タイムツリーのように、家族みんなで同じ予定を見て・書き込めます。<br>
+      ・誰かが入れた予定は、全員の手帳にすぐ反映されます<br>
+      ・マーカーの色分けで「誰の予定か」がわかります（色の名前も共有されます）<br>
+      ・TODO・メモは共有されず、自分専用のままです</p>
+      <button class="gbtn accent" onclick="shareCreate()">共有手帳を作る（最初のひとり）</button>
+      <button class="gbtn" onclick="shareJoin()">共有コードで参加する（家族）</button>`;
+  }
+}
 
 /* ================= Googleカレンダー連携（フェーズ2） ================= */
 const GCAL_CLIENT_ID = "410541871791-bok50oheek16df8grofccf9gk2k56f01.apps.googleusercontent.com";
@@ -931,7 +1116,7 @@ async function gcalFetchRange(a, b){
   try{ localStorage.setItem("techo-gcache", JSON.stringify(gcache)); }catch(_e){}
 }
 function gcFind(id){ for(const k in gcache) for(const e of gcache[k]) if(e.id===id) return e; return null; }
-function findEv(id){ return GC() ? gcFind(id) : store.events.find(x=>x.id===id); }
+function findEv(id){ if (SH()) return shEvents.find(x=>x.id===id); return GC() ? gcFind(id) : store.events.find(x=>x.id===id); }
 
 /* --- 保存・削除（Googleカレンダーへ書き込み） --- */
 async function gcalSaveFromSheet(base){
@@ -995,6 +1180,8 @@ function renderGcalBox(){
   const box = document.getElementById("gcalBox"); if(!box) return;
   if (!GCAL_CLIENT_ID){
     box.innerHTML = '<p class="note" style="margin-top:4px">準備中です。次の更新で使えるようになります。</p>';
+  } else if (SH()){
+    box.innerHTML = '<p class="note" style="margin-top:4px">「みんなで共有」を利用中は使えません。<br>Googleカレンダー連携に切り替えるには、先に上の「共有をやめる」を押してください。</p>';
   } else if (GC()){
     box.innerHTML = `<p class="note" style="margin-top:4px">連携中：<b>${esc(GC().calName)}</b>${GC().email?`（${esc(GC().email)}）`:""}<br>
       予定はGoogleカレンダーに保存され、通知はGoogleカレンダーアプリから届きます。</p>
@@ -1008,6 +1195,7 @@ function renderGcalBox(){
   }
 }
 async function gcalConnect(){
+  if (SH()){ alert("「みんなで共有」を利用中はGoogleカレンダー連携は使えません。\n先に「共有をやめる」を押してください。"); return; }
   try{
     await gcalAuth();
     const cl = await gapiFetch("users/me/calendarList?minAccessRole=writer");
@@ -1061,9 +1249,11 @@ function importData(inp){
       const data = JSON.parse(rd.result);
       if(!data || !Array.isArray(data.events)) throw 0;
       if(!confirm("バックアップを読み込みますか？\n（今のデータは置き換わります）")) return;
+      const sh = store.share; // 共有の参加状態は今のまま引き継ぐ
       store = data;
       store.daymarks=store.daymarks||{}; store.dtodos=store.dtodos||{};
       store.todos=store.todos||{}; store.memos=store.memos||{}; store.names=store.names||{...DEFAULT_NAMES};
+      if (sh) store.share = sh; else delete store.share;
       save(); render(); alert("読み込みました");
     }catch(e){ alert("読み込めませんでした。マイ手帳の「書き出す」で作ったファイルを選んでください"); }
   };
@@ -1079,6 +1269,23 @@ function render(){
 }
 render();
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js");
+</script>
+<script type="module">
+/* Firebase SDK（みんなで共有）— FB_CONFIG が設定されている時だけ読み込む */
+if (window.FB_CONFIG){
+  try{
+    const V = "12.16.0";
+    const [{initializeApp}, au, fs] = await Promise.all([
+      import(`https://www.gstatic.com/firebasejs/${V}/firebase-app.js`),
+      import(`https://www.gstatic.com/firebasejs/${V}/firebase-auth.js`),
+      import(`https://www.gstatic.com/firebasejs/${V}/firebase-firestore.js`),
+    ]);
+    const app = initializeApp(window.FB_CONFIG);
+    // オフラインでも読める・書ける（つながった時に自動同期）
+    const db = fs.initializeFirestore(app, { localCache: fs.persistentLocalCache({ tabManager: fs.persistentSingleTabManager({}) }) });
+    shareBoot({ fs, db, auth: au.getAuth(app), signInAnonymously: au.signInAnonymously, onAuthStateChanged: au.onAuthStateChanged });
+  }catch(_e){ console.warn("firebase init failed", _e); }
+}
 </script>
 </body>
 </html>

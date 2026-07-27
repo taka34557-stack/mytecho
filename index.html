@@ -4,7 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#8c2332">
-<title>マイ手帳（モックアップ）</title>
+<title>マイ手帳</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" type="image/png" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="マイ手帳">
 <style>
   * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   :root{
@@ -155,6 +162,7 @@
   .legendrow .sw{ width:26px; height:26px; border-radius:6px; flex:none; }
   .legendrow input{ flex:1; border:1px solid var(--line); border-radius:6px; padding:8px; font-size:16px; background:#fff; }
   .note{ font-size:11px; color:#8a8478; margin-top:14px; line-height:1.7; }
+  .setbtn{ flex:1; padding:12px; border:1px solid var(--line); border-radius:8px; background:#fff; font-size:14px; color:var(--ink); }
 
   /* ===== 追加ボタン・入力シート ===== */
   #addBtn{
@@ -199,7 +207,6 @@
 </head>
 <body>
 
-<div class="banner">モックアップ版：サンプルデータ表示中（見た目確認用）。共有・通知は本実装で対応します</div>
 <header>
   <span class="mnum" id="h-num">5</span><span class="mname" id="h-name">May</span><span class="yr" id="h-yr">2026</span>
   <span class="yr" id="h-sub"></span>
@@ -239,6 +246,18 @@
   <section id="view-settings" hidden>
     <h3 style="font-size:14px;margin-bottom:6px">マーカーの色分け（名前を付けられます）</h3>
     <div id="legend"></div>
+    <h3 style="font-size:14px;margin:18px 0 6px">バックアップ</h3>
+    <div style="display:flex;gap:10px">
+      <button class="setbtn" onclick="exportData()">💾 書き出す</button>
+      <button class="setbtn" onclick="document.getElementById('importFile').click()">📥 読み込む</button>
+      <input type="file" id="importFile" accept=".json,application/json" style="display:none" onchange="importData(this)">
+    </div>
+    <p class="note" style="margin-top:6px">・「書き出す」で予定・TODO・メモをまとめてファイルに保存できます。ときどき書き出しておくと安心です。<br>
+    ・機種変更のときは、新しいスマホでこのページを開いて「読み込む」からファイルを選ぶだけです。</p>
+    <h3 style="font-size:14px;margin:18px 0 6px">ホーム画面に追加（アプリとして使う）</h3>
+    <p class="note">・iPhone: Safariでこのページを開き、共有ボタン（□↑）→「ホーム画面に追加」。<br>
+    ・Android: Chromeのメニュー（︙）→「ホーム画面に追加」。<br>
+    ・追加すると普通のアプリと同じように起動でき、電波のない場所でも使えます。</p>
     <p class="note">
       ・蛍光マーカー6色＋みんなの予定用の赤の7色です。名前は自由に変えられます。<br>
       ・月間の日付マスの<b>右上の○をタップ</b>すると、紙の手帳と同じ●印を「赤→青→緑→なし」の順で付けられます。<br>
@@ -246,7 +265,7 @@
       ・🔁マークの付いた毎週の予定をタップすると<b>「この日だけ」「毎週すべて」</b>を選んで変更・削除できます。リスケは「この日だけ」で日時を直せば他の週はそのままです。<br>
       ・週間ページ下の<b>DAILY TO DO</b>は日ごと、<b>WEEKLY TO DO</b>は週ごとのやることリストです。入力欄から追加、チェックで完了、✕で削除。残りは前の日／前の週から1タップで引き継げます。<br>
       ・週間の日付（例: 4 MON）をタップするとその日のDAILY TO DOに移動します。日付の横の<b>□数字</b>はその日の残り件数です。<br>
-      ・本実装では、家族共有（Googleカレンダー連携）・出発時間の通知・バックアップがここに並びます。
+      ・家族共有（Googleカレンダー連携）と出発時間の通知は、次の更新で追加予定です。
     </p>
   </section>
 </main>
@@ -313,43 +332,38 @@ const PEN = { // 丸囲み略号・ペン書き用の濃い色（マーカーと
   pink:"#d6608f", blue:"#2a92a0", green:"#5a9e32", yellow:"#a89b1d",
   orange:"#dd8a2e", purple:"#7c5fc9", red:"#c0392b",
 };
-const HOLIDAYS = { // モック用サンプル（本実装では祝日データを内蔵）
-  "2026-05-03":"憲法記念日","2026-05-04":"みどりの日","2026-05-05":"こどもの日","2026-05-06":"振替休日",
-  "2026-07-20":"海の日","2026-08-11":"山の日",
+const HOLIDAYS = { // 2026〜2028年の祝日
+  "2026-01-01":"元日","2026-01-12":"成人の日","2026-02-11":"建国記念の日","2026-02-23":"天皇誕生日",
+  "2026-03-20":"春分の日","2026-04-29":"昭和の日","2026-05-03":"憲法記念日","2026-05-04":"みどりの日",
+  "2026-05-05":"こどもの日","2026-05-06":"振替休日","2026-07-20":"海の日","2026-08-11":"山の日",
+  "2026-09-21":"敬老の日","2026-09-22":"国民の休日","2026-09-23":"秋分の日","2026-10-12":"スポーツの日",
+  "2026-11-03":"文化の日","2026-11-23":"勤労感謝の日",
+  "2027-01-01":"元日","2027-01-11":"成人の日","2027-02-11":"建国記念の日","2027-02-23":"天皇誕生日",
+  "2027-03-21":"春分の日","2027-03-22":"振替休日","2027-04-29":"昭和の日","2027-05-03":"憲法記念日",
+  "2027-05-04":"みどりの日","2027-05-05":"こどもの日","2027-07-19":"海の日","2027-08-11":"山の日",
+  "2027-09-20":"敬老の日","2027-09-23":"秋分の日","2027-10-11":"スポーツの日","2027-11-03":"文化の日",
+  "2027-11-23":"勤労感謝の日",
+  "2028-01-01":"元日","2028-01-10":"成人の日","2028-02-11":"建国記念の日","2028-02-23":"天皇誕生日",
+  "2028-03-20":"春分の日","2028-04-29":"昭和の日","2028-05-03":"憲法記念日","2028-05-04":"みどりの日",
+  "2028-05-05":"こどもの日","2028-07-17":"海の日","2028-08-11":"山の日","2028-09-18":"敬老の日",
+  "2028-09-22":"秋分の日","2028-10-09":"スポーツの日","2028-11-03":"文化の日","2028-11-23":"勤労感謝の日",
 };
-const ROKUYO = ["大安","赤口","先勝","友引","先負","仏滅"]; // モックでは簡易表示
+const RK6 = ["大安","赤口","先勝","友引","先負","仏滅"];
+const RK_START = Date.UTC(2025,11,1); // 六曜テーブル開始日 2025-12-01（2028-12-31まで）
+const RK_TABLE = "45012345012345012340123450123450123450123450123451234501234501234501234501234523450123450123450123450123450134501234501234501234501234501450123450123450123450123450123501234501234501234501234501230123450123450123450123450123412345012345012345012345012345023450123450123450123450123450345012345012345012345012345012450123450123450123450123450125012345012345012345012345012340123450123450123450123450123451234501234501234501234501234502345012345012345012345012345034501234501234501234501234501245012345012345012345012345012501234501234501234501234501234012345012345012345012345012341234501234501234501234501234523450123450123450123450123450134501234501234501234501234501450123450123450123450123450125012345012345012345012345012340123450123450123450123450123451234501234501234501234501234502345012345012345012345012345034501234501234501234501234501245012345012345012345012345012350123450123450123450123450123012345012345012345012345012345012345012345012345012345012341234501234501234501234501234523450123450123450123450123450134501234501234501234501234501450123450123450123450123450125012345012345012345012345012340123450123450123";
+function rokuyoOf(d){
+  const i = Math.round((Date.UTC(d.getFullYear(),d.getMonth(),d.getDate())-RK_START)/86400000);
+  return (i>=0 && i<RK_TABLE.length) ? RK6[+RK_TABLE[i]] : "";
+}
 const HOUR_S = 5, HOUR_E = 24, HPX = 26; // 5時〜24時・1時間26px
 const DOWS = ["MON","TUE","WED","THU","FRI","SAT","SUN"];
 const MNAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 
 /* ================= データ ================= */
-const LS = "techo-mock-v5"; // 毎週くり返し対応版（旧バージョンのデータは初期化される）
+const LS = "techo-v1"; // 本実装版データ
 let store = JSON.parse(localStorage.getItem(LS) || "null");
 if (!store) {
-  // サンプル週: 2026-05-04(月)〜05-10(日) — 部活・塾・バイトなど習い事は「毎週くり返し」で登録済み
-  store = { events: [
-    rev("2026-05-04","部活","blue",[0,3],"08:30","12:00",{depart:"07:50",notify:1}),       // 毎週 月・木
-    rev("2026-05-04","散歩","green",[0,1,2],null,null,{allday:1,badge:"サ"}),              // 毎週 月〜水
-    rev("2026-05-04","塾（笠岡）","blue",[1,4],"19:30","21:30",{depart:"19:00",notify:1}), // 毎週 火・金
-    rev("2026-05-04","バイト","purple",[2],"21:00","24:00",{}),                            // 毎週 水
-    rev("2026-05-04","英検対策","pink",[4],"17:00","18:00",{badge:"英"}),                  // 毎週 金
-    ev("2026-05-05","こどもの日おでかけ","red",null,null,{allday:1}),
-    ev("2026-05-06","総会・打合せ","orange","10:00","12:00",{}),
-    ev("2026-05-06","メルカリ発送","yellow","19:00","20:00",{badge:"メ"}),
-    ev("2026-05-07","歯医者","green","16:30","17:30",{}),
-    ev("2026-05-08","面接","yellow","11:00","12:00",{red:1}),
-    ev("2026-05-09","試合（大会）","blue","09:00","13:00",{depart:"08:00",notify:1,red:1}),
-    ev("2026-05-09","美容院","orange","10:00","11:30",{}),   // ← 試合とかぶり表示のデモ
-    ev("2026-05-09","ピアノ発表会","pink","14:00","16:00",{depart:"13:15",notify:1}),
-    ev("2026-05-10","遠征","blue","07:00","17:00",{depart:"06:30",notify:1}),
-    ev("2026-05-10","家族で外食","red","18:00","19:30",{}),
-  ],
-  names: {...DEFAULT_NAMES},
-  todos: { "2026-05-04": [ {t:"上履きを洗う",d:1}, {t:"塾の月謝振込", d:0}, {t:"ユニフォーム名前付け", d:0} ] },
-  dtodos: { "2026-05-05": [ {t:"お弁当作り",d:1} ], "2026-05-08": [ {t:"面接の書類準備",d:0}, {t:"クリーニング受け取り",d:0} ] },
-  memos: {},
-  daymarks: { "2026-05-06":"red", "2026-05-08":"blue", "2026-05-16":"green" }, // 日付右上の●印サンプル
-  };
+  store = { events: [], names: {...DEFAULT_NAMES}, todos: {}, dtodos: {}, memos: {}, daymarks: {} };
   save();
 }
 store.daymarks = store.daymarks || {};
@@ -378,8 +392,8 @@ const eventsOn = ds => store.events.filter(e=>occursOn(e,ds));
 
 /* ================= 状態 ================= */
 let tab = "week";
-let cur = new Date(2026,4,4);   // モックの初期表示（サンプル週）
-let page = 0;                    // 0=月火水(左ページ) 1=木金土日(右ページ)
+let cur = new Date();            // 今日から表示
+let page = (new Date().getDay()+6)%7 < 3 ? 0 : 1; // 0=月火水(左ページ) 1=木金土日(右ページ)
 let editId = null;
 
 /* ================= ユーティリティ ================= */
@@ -407,7 +421,7 @@ function move(n){
   else { cur = new Date(cur.getFullYear(), cur.getMonth()+n, 1); }
   render();
 }
-function goToday(){ cur = new Date(2026,4,4); page=0; render(); } // モックはサンプル週へ
+function goToday(){ cur = new Date(); page = (cur.getDay()+6)%7 < 3 ? 0 : 1; render(); }
 
 /* ================= 週間バーチカル ================= */
 function renderWeek(){
@@ -561,7 +575,7 @@ function renderMonth(){
       const trim=t=>t.replace(/^0/,"").replace(/:00$/,"");
       const rng=e=>e.start?`${trim(e.start)}-${trim(e.end==="24:00"?"0:00":e.end)} `:"";
       row += `<td class="${other?"othermonth":""} ${dow===5?"sat":""} ${dow===6?"sun":""} ${hol?"hol":""}" onclick="gotoWeek('${ds}')">
-        <div class="cell-date"><span class="dm ${store.daymarks[ds]||""}" onclick="cycleMark(event,'${ds}')"></span>${d.getDate()}<span class="rk">${ROKUYO[(d.getDate()+m)%6]}</span>${hol?`<span class="hn">${hol}</span>`:""}</div>
+        <div class="cell-date"><span class="dm ${store.daymarks[ds]||""}" onclick="cycleMark(event,'${ds}')"></span>${d.getDate()}<span class="rk">${rokuyoOf(d)}</span>${hol?`<span class="hn">${hol}</span>`:""}</div>
         ${evs.slice(0,5).map(e=>`<div class="mev ${e.red?"red":""}">${
           e.badge
             ? `<span class="mbc" style="border-color:${PEN[e.marker]};color:${PEN[e.marker]}">${esc(e.badge)}</span>${rng(e)}${esc(e.title)}`
@@ -773,6 +787,33 @@ document.addEventListener("touchend",e=>{
   render();
 },{passive:true});
 
+/* ================= バックアップ ================= */
+function exportData(){
+  const d = new Date();
+  const name = `mytecho-backup-${d.getFullYear()}${String(d.getMonth()+1).padStart(2,"0")}${String(d.getDate()).padStart(2,"0")}.json`;
+  const blob = new Blob([JSON.stringify(store,null,1)], {type:"application/json"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(a.href);
+}
+function importData(inp){
+  const f = inp.files[0]; if(!f) return;
+  const rd = new FileReader();
+  rd.onload = () => {
+    try{
+      const data = JSON.parse(rd.result);
+      if(!data || !Array.isArray(data.events)) throw 0;
+      if(!confirm("バックアップを読み込みますか？\n（今のデータは置き換わります）")) return;
+      store = data;
+      store.daymarks=store.daymarks||{}; store.dtodos=store.dtodos||{};
+      store.todos=store.todos||{}; store.memos=store.memos||{}; store.names=store.names||{...DEFAULT_NAMES};
+      save(); render(); alert("読み込みました");
+    }catch(e){ alert("読み込めませんでした。マイ手帳の「書き出す」で作ったファイルを選んでください"); }
+  };
+  rd.readAsText(f); inp.value="";
+}
+
 /* ================= 描画 ================= */
 function render(){
   renderHeader();
@@ -781,6 +822,7 @@ function render(){
   else renderSettings();
 }
 render();
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js");
 </script>
 </body>
 </html>

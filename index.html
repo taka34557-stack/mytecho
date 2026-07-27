@@ -324,6 +324,9 @@
     <label class="chk"><input type="checkbox" id="f-notify">🔔通知する</label>
     <label class="chk"><input type="checkbox" id="f-allday">終日</label>
   </div>
+  <div class="row" id="lockRow" style="display:none">
+    <label class="chk"><input type="checkbox" id="f-lock">🔒 保護（自分だけ変更・削除できる）</label>
+  </div>
   <div class="sheet-actions">
     <button class="btn-cancel" onclick="closeSheet()">キャンセル</button>
     <button class="btn-del" id="delBtn" onclick="deleteEvent()" style="display:none">削除</button>
@@ -629,13 +632,13 @@ function gotoWeek(ds){ cur = new Date(ds); const dow=(cur.getDay()+6)%7; page = 
 
 /* ================= 設定（色の名前） ================= */
 function renderSettings(){
-  // 共有中は色ごとの🔒（この色の予定は登録した本人だけが変更・削除できる）を表示
-  const lockb = k => SH()
+  // 共有中は仕事・バイト色だけに🔒（この色の予定は登録した本人だけが変更・削除できる）を表示
+  const lockb = k => (SH() && LOCKABLE.includes(k))
     ? `<button class="lockbtn ${shLocks()[k]?"on":""}" onclick="toggleLock('${k}')" title="この色の予定を保護">${shLocks()[k]?"🔒":"🔓"}</button>` : "";
   document.getElementById("legend").innerHTML = Object.keys(MARKERS).map(k=>
     `<div class="legendrow"><div class="sw" style="background:${MARKERS[k]}"></div>
      <input value="${esc(store.names[k]||"")}" placeholder="名前を付ける" onchange="store.names['${k}']=this.value;save();shareNamesPush()">${lockb(k)}</div>`).join("")
-    + (SH() ? `<p class="note" style="margin-top:6px">🔒を付けた色の予定は、<b>登録した本人だけ</b>が変更・削除できます（例：仕事の色に🔒）。設定は家族全員に反映されます。</p>` : "");
+    + (SH() ? `<p class="note" style="margin-top:6px">🔒を付けた色の予定は、<b>登録した本人だけ</b>が変更・削除できます。設定は家族全員に反映されます。<br>そのほかの色の大事な予定は、予定の入力画面の「🔒 保護」で1件ずつ守れます。</p>` : "");
   renderShareBox();
   renderGcalBox();
 }
@@ -716,7 +719,7 @@ function openSheet(id, date, time){
   document.getElementById("scope-one").classList.add("sel");
   document.getElementById("scope-all").classList.remove("sel");
   document.getElementById("sheetTitle").textContent = (e?(isRep?"🔁 毎週の予定を編集":"予定を編集"):"予定を追加")
-    + (SH() && e && e.by ? `（${(shLocks()[e.marker] && !shIsMine(e)) ? "🔒 " : ""}${e.by}さんが登録）` : "");
+    + (SH() && e && e.by ? `（${((shLocks()[e.marker]||e.lock) && !shIsMine(e)) ? "🔒 " : ""}${e.by}さんが登録）` : "");
   document.getElementById("delBtn").style.display = e?"block":"none";
   document.getElementById("f-title").value = e?e.title:"";
   document.getElementById("f-date").value = e?(isRep?editOccDate:e.date):(date||fmt(cur));
@@ -733,6 +736,9 @@ function openSheet(id, date, time){
   document.getElementById("f-red").checked = !!(e&&e.red);
   document.getElementById("f-notify").checked = !!(e&&e.notify);
   document.getElementById("f-allday").checked = !!(e&&e.allday);
+  document.getElementById("f-lock").checked = !!(e&&e.lock);
+  document.getElementById("f-lock").disabled = !!(SH() && e && e.by && !shIsMine(e)); // 保護の付け外しは本人だけ
+  document.getElementById("lockRow").style.display = SH() ? "" : "none"; // 🔒保護は共有中だけ
   selMarker = e?e.marker:"blue";
   renderSwatches();
   refreshRepeatUI();
@@ -756,7 +762,8 @@ function saveEvent(){
       ? calcDepart(start, +document.getElementById("f-depart-min").value) : null,
     badge:document.getElementById("f-badge").value.trim()||null,
     notify:document.getElementById("f-notify").checked,
-    red:document.getElementById("f-red").checked, allday };
+    red:document.getElementById("f-red").checked, allday,
+    lock:(SH() && document.getElementById("f-lock").checked) || null };
   if (SH()){ shareSaveFromSheet(base); return; }
   if (GC()){ gcalSaveFromSheet(base); return; }
   const rid = ()=>Math.random().toString(36).slice(2);
@@ -878,6 +885,7 @@ function shareNamesPush(){ // マーカー名の変更を共有（連続入力�
   shNamesTimer = setTimeout(()=>{ fbApi.fs.setDoc(shRef(), {names: store.names}, {merge:true}).catch(()=>{}); }, 600);
 }
 /* --- 色ロック（🔒の色の予定は、登録した本人だけが変更・削除できる） --- */
+const LOCKABLE = ["yellow","purple"]; // 🔒スイッチを出す色＝仕事・バイト
 const shLocks = ()=> (SH() && SH().locks) || {};
 function shIsMine(e){ // 自分が登録した予定か（古い予定はuidが無いので名前で判定）
   if (e.byUid) return e.byUid === myUid;
@@ -886,6 +894,10 @@ function shIsMine(e){ // 自分が登録した予定か（古い予定はuidが�
 }
 function shGuardEdit(e0){ // 変更・削除前のチェック。false=中止
   if (!e0 || shIsMine(e0)) return true;
+  if (e0.lock){ // 予定ごとの🔒保護
+    alert(`🔒 これは${e0.by||"ほかの人"}さんが登録した保護された予定です。\n登録した本人だけが変更・削除できます。`);
+    return false;
+  }
   if (shLocks()[e0.marker]){
     alert(`🔒 これは${e0.by||"ほかの人"}さんが登録した「${store.names[e0.marker]||"この色"}」の予定です。\n登録した本人だけが変更・削除できます。`);
     return false;

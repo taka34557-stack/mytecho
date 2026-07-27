@@ -12,6 +12,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="マイ手帳">
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   :root{
@@ -203,6 +204,8 @@
   .dowpick button.sel{ background:var(--accent); border-color:var(--accent); color:#fff; font-weight:bold; }
   .hint{ font-size:11px; color:#8a8478; }
   .scopehint{ font-size:11px; color:#8a8478; margin:-2px 0 8px 72px; }
+  .gbtn{ width:100%; padding:13px; border:1px solid var(--line); border-radius:8px; background:#fff; font-size:14px; color:var(--ink); margin-top:6px; }
+  .gbtn.accent{ background:var(--accent); border-color:var(--accent); color:#fff; font-weight:bold; }
 </style>
 </head>
 <body>
@@ -214,6 +217,7 @@
     <button onclick="move(-1)">◀</button><button onclick="goToday()">今日</button><button onclick="move(1)">▶</button>
   </div>
 </header>
+<div id="gcalBar" class="banner" style="display:none;cursor:pointer" onclick="gcalReauth()">🔄 Googleカレンダーへ再接続が必要です（ここをタップ）</div>
 
 <main>
   <section id="view-week">
@@ -258,6 +262,8 @@
     <p class="note">・iPhone: Safariでこのページを開き、共有ボタン（□↑）→「ホーム画面に追加」。<br>
     ・Android: Chromeのメニュー（︙）→「ホーム画面に追加」。<br>
     ・追加すると普通のアプリと同じように起動でき、電波のない場所でも使えます。</p>
+    <h3 style="font-size:14px;margin:18px 0 6px">Googleカレンダー連携（家族共有・通知）</h3>
+    <div id="gcalBox"></div>
     <p class="note">
       ・蛍光マーカー6色＋みんなの予定用の赤の7色です。名前は自由に変えられます。<br>
       ・月間の日付マスの<b>右上の○をタップ</b>すると、紙の手帳と同じ●印を「赤→青→緑→なし」の順で付けられます。<br>
@@ -388,7 +394,17 @@ function occursOn(e, ds){
   const d=new Date(ds);
   return e.repeat.days.includes((d.getDay()+6)%7);        // 月=0〜日=6
 }
-const eventsOn = ds => store.events.filter(e=>occursOn(e,ds));
+function eventsOn(ds){ // Google連携中はGoogleカレンダーのキャッシュから、通常は端末内データから
+  if (GC()){
+    const seen={}, out=[];
+    for (const k in gcache){
+      const p=k.split("_");
+      if (ds>=p[0] && ds<=p[1]) for (const e of gcache[k]) if (e.date===ds && !seen[e.id]){ seen[e.id]=1; out.push(e); }
+    }
+    return out;
+  }
+  return store.events.filter(e=>occursOn(e,ds));
+}
 
 /* ================= 状態 ================= */
 let tab = "week";
@@ -426,6 +442,7 @@ function goToday(){ cur = new Date(); page = (cur.getDay()+6)%7 < 3 ? 0 : 1; ren
 /* ================= 週間バーチカル ================= */
 function renderWeek(){
   const mon = weekMon(cur);
+  if (GC()) ensureGRange(fmt(mon), fmt(addD(mon,6)));
   const days = (page===0 ? [0,1,2] : [3,4,5,6]).map(i=>addD(mon,i));
   const wrap = document.getElementById("weekPage");
   const H = (HOUR_E-HOUR_S)*HPX;
@@ -562,6 +579,7 @@ function tapSlot(evn, ds){
 function renderMonth(){
   const y=cur.getFullYear(), m=cur.getMonth();
   const first=new Date(y,m,1), start=weekMon(first);
+  if (GC()) ensureGRange(fmt(start), fmt(addD(start,41)));
   let html = `<tr><th class="wk"></th>${["MONDAY","TUESDAY","WEDNESDAY","THURSDAY","FRIDAY","SATURDAY","SUNDAY"]
     .map((n,i)=>`<th class="${i===5?"sat":i===6?"sun":""}">${n}</th>`).join("")}</tr>`;
   let d = new Date(start);
@@ -608,6 +626,7 @@ function renderSettings(){
   document.getElementById("legend").innerHTML = Object.keys(MARKERS).map(k=>
     `<div class="legendrow"><div class="sw" style="background:${MARKERS[k]}"></div>
      <input value="${esc(store.names[k]||"")}" placeholder="名前を付ける" onchange="store.names['${k}']=this.value;save()"></div>`).join("");
+  renderGcalBox();
 }
 
 /* ================= 入力シート ================= */
@@ -641,7 +660,7 @@ function setScope(s){
   refreshRepeatUI();
 }
 function refreshRepeatUI(){
-  const e = editId ? store.events.find(x=>x.id===editId) : null;
+  const e = editId ? findEv(editId) : null;
   const isRep = !!(e && e.repeat);
   document.getElementById("repRow").style.display = isRep ? "none" : "flex";
   document.getElementById("scopeRow").style.display = isRep ? "flex" : "none";
@@ -674,7 +693,7 @@ function renderSwatches(){
 }
 function openSheet(id, date, time){
   editId = id||null;
-  const e = id ? store.events.find(x=>x.id===id) : null;
+  const e = id ? findEv(id) : null;
   const isRep = !!(e && e.repeat);
   editOccDate = isRep ? (date || e.date) : null;
   editScope = "one";
@@ -706,6 +725,7 @@ function openSheet(id, date, time){
   renderSwatches();
   refreshRepeatUI();
   updateDepartPreview();
+  if (GC() && e && e.recurringEventId) gcalLoadMasterInto(e); // くり返しの曜日・終了日をGoogleから取得して反映
   document.getElementById("sheet").classList.add("open");
   document.getElementById("overlay").classList.add("show");
 }
@@ -725,8 +745,9 @@ function saveEvent(){
     badge:document.getElementById("f-badge").value.trim()||null,
     notify:document.getElementById("f-notify").checked,
     red:document.getElementById("f-red").checked, allday };
+  if (GC()){ gcalSaveFromSheet(base); return; }
   const rid = ()=>Math.random().toString(36).slice(2);
-  const e0 = editId ? store.events.find(x=>x.id===editId) : null;
+  const e0 = editId ? findEv(editId) : null;
   if (e0 && e0.repeat){
     if (editScope==="all"){ // 毎週すべて変更（曜日・終了日も更新。開始日はそのまま）
       if(!repDays.length){ alert("くり返す曜日を選んでください"); return; }
@@ -749,6 +770,7 @@ function saveEvent(){
 }
 function deleteEvent(){
   if(!editId) return;
+  if (GC()){ gcalDeleteFromSheet(); return; }
   const e0 = store.events.find(x=>x.id===editId);
   if (e0 && e0.repeat){
     if (editScope==="one"){
@@ -786,6 +808,240 @@ document.addEventListener("touchend",e=>{
   else    { if(page===1) page=0; else { cur=addD(cur,-7); page=1; } }
   render();
 },{passive:true});
+
+/* ================= Googleカレンダー連携（フェーズ2） ================= */
+const GCAL_CLIENT_ID = ""; // ← OAuthクライアントIDをここに設定（空の間、この機能は「準備中」表示で休眠）
+const GCAL_SCOPE = "https://www.googleapis.com/auth/calendar";
+function GC(){ return store.gcal || null; }
+let gToken = sessionStorage.getItem("gcal-token") || null;
+let gTokenClient = null, gAuthBroken = false, gFetching = {};
+let gcache = {};
+try{ gcache = JSON.parse(localStorage.getItem("techo-gcache") || "{}"); }catch(_e){ gcache = {}; }
+
+function gcalInit(){
+  if (gTokenClient || !window.google || !GCAL_CLIENT_ID) return;
+  gTokenClient = google.accounts.oauth2.initTokenClient({ client_id: GCAL_CLIENT_ID, scope: GCAL_SCOPE, callback: ()=>{} });
+}
+function gcalAuth(){
+  gcalInit();
+  return new Promise((res, rej)=>{
+    if (!gTokenClient){ rej(new Error("gsi")); return; }
+    gTokenClient.callback = t=>{
+      if (t && t.access_token){
+        gToken = t.access_token; sessionStorage.setItem("gcal-token", gToken);
+        gAuthBroken = false; hideGcalBar(); res(t);
+      } else rej(t);
+    };
+    gTokenClient.error_callback = e=>rej(e);
+    gTokenClient.requestAccessToken();
+  });
+}
+async function gapiFetch(path, opts={}){
+  const r = await fetch("https://www.googleapis.com/calendar/v3/" + path, {
+    ...opts, headers: { "Authorization": "Bearer " + gToken, "Content-Type": "application/json", ...(opts.headers||{}) },
+  });
+  if (r.status === 401){
+    gToken = null; sessionStorage.removeItem("gcal-token"); gAuthBroken = true; showGcalBar();
+    throw new Error("auth");
+  }
+  if (!r.ok) throw new Error("API " + r.status);
+  return r.status === 204 ? null : r.json();
+}
+const calPath = ()=> "calendars/" + encodeURIComponent(GC().calId) + "/events";
+function showGcalBar(){ const b=document.getElementById("gcalBar"); if(b && GC()) b.style.display="block"; }
+function hideGcalBar(){ const b=document.getElementById("gcalBar"); if(b) b.style.display="none"; }
+function gcalReauth(){ gcalAuth().then(()=>{ gcache={}; render(); }).catch(()=>{}); }
+
+/* --- 変換: 手帳の予定 ⇔ Googleイベント --- */
+function addDs(ds, n){ const d=new Date(ds); d.setDate(d.getDate()+n); return fmt(d); }
+function remindersFor(e){
+  const ov=[];
+  if (e.depart && e.start){ let m=rawMins(e.start)-rawMins(e.depart); if(m<0) m+=1440; ov.push({method:"popup", minutes:m}); }
+  if (e.notify) ov.push({method:"popup", minutes:10});
+  return ov.length ? {useDefault:false, overrides:ov} : {useDefault:true};
+}
+function evToG(e){
+  const body = { summary: e.title,
+    extendedProperties: { private: { mytecho:"1", marker:e.marker||"blue", badge:e.badge||"", red:e.red?"1":"", depart:e.depart||"", notify:e.notify?"1":"" } },
+    reminders: remindersFor(e) };
+  if (e.allday){ body.start={date:e.date}; body.end={date:addDs(e.date,1)}; }
+  else {
+    let endT=e.end, endD=e.date;
+    if (endT==="24:00"){ endT="00:00"; endD=addDs(e.date,1); }
+    body.start={dateTime:`${e.date}T${e.start}:00`, timeZone:"Asia/Tokyo"};
+    body.end={dateTime:`${endD}T${endT}:00`, timeZone:"Asia/Tokyo"};
+  }
+  if (e.repeat && e.repeat.days && e.repeat.days.length){
+    const BY=["MO","TU","WE","TH","FR","SA","SU"];
+    let r="RRULE:FREQ=WEEKLY;BYDAY=" + [...e.repeat.days].sort((a,b)=>a-b).map(d=>BY[d]).join(",");
+    if (e.repeat.until) r += ";UNTIL=" + e.repeat.until.replace(/-/g,"") + "T145959Z"; // JSTその日いっぱい
+    body.recurrence=[r];
+    const skips = Object.keys((e.repeat.skip)||{});
+    if (skips.length){
+      body.recurrence.push(e.allday
+        ? "EXDATE;VALUE=DATE:" + skips.map(d=>d.replace(/-/g,"")).join(",")
+        : "EXDATE;TZID=Asia/Tokyo:" + skips.map(d=>d.replace(/-/g,"") + "T" + e.start.replace(":","") + "00").join(","));
+    }
+  }
+  return body;
+}
+function gToEv(g){
+  const xp = (g.extendedProperties && g.extendedProperties.private) || {};
+  const allday = !!(g.start && g.start.date);
+  const date = allday ? g.start.date : (g.start.dateTime||"").slice(0,10);
+  let end = null;
+  if (!allday){
+    end = (g.end.dateTime||"").slice(11,16);
+    if ((g.end.dateTime||"").slice(0,10) > date) end = "24:00"; // 日またぎは24時までとして表示
+  }
+  return { id:g.id, recurringEventId:g.recurringEventId||null, date,
+    title:g.summary||"（無題）", marker: MARKERS[xp.marker] ? xp.marker : "blue",
+    start: allday?null:(g.start.dateTime||"").slice(11,16), end,
+    depart: xp.depart||null, notify: xp.notify==="1", red: xp.red==="1",
+    allday, badge: xp.badge||null,
+    repeat: g.recurringEventId ? {days:[],until:null,skip:{}} : null };
+}
+function parseRRule(rec){
+  const out={days:[], until:null};
+  const r=(rec||[]).find(s=>s.indexOf("RRULE")===0); if(!r) return out;
+  const by=/BYDAY=([^;]+)/.exec(r);
+  if (by){ const M={MO:0,TU:1,WE:2,TH:3,FR:4,SA:5,SU:6};
+    out.days = by[1].split(",").map(s=>M[s.slice(-2)]).filter(v=>v!==undefined); }
+  const un=/UNTIL=(\d{8})/.exec(r);
+  if (un) out.until = un[1].slice(0,4)+"-"+un[1].slice(4,6)+"-"+un[1].slice(6,8);
+  return out;
+}
+
+/* --- 表示用の取得（範囲ごとにキャッシュ・オフライン時は前回の内容で表示） --- */
+function ensureGRange(a, b){
+  if (!GC() || gAuthBroken) return;
+  const key=a+"_"+b;
+  if (gcache[key] || gFetching[key]) return;
+  gFetching[key]=1;
+  gcalFetchRange(a,b).then(()=>{ delete gFetching[key]; render(); })
+    .catch(()=>{ delete gFetching[key]; });
+}
+async function gcalFetchRange(a, b){
+  const q = new URLSearchParams({ timeMin:a+"T00:00:00+09:00", timeMax:b+"T23:59:59+09:00",
+    singleEvents:"true", orderBy:"startTime", maxResults:"2500" });
+  const res = await gapiFetch(calPath()+"?"+q);
+  gcache[a+"_"+b] = (res.items||[]).filter(g=>g.status!=="cancelled").map(gToEv);
+  const keys=Object.keys(gcache);
+  while (keys.length>16){ delete gcache[keys.shift()]; }
+  try{ localStorage.setItem("techo-gcache", JSON.stringify(gcache)); }catch(_e){}
+}
+function gcFind(id){ for(const k in gcache) for(const e of gcache[k]) if(e.id===id) return e; return null; }
+function findEv(id){ return GC() ? gcFind(id) : store.events.find(x=>x.id===id); }
+
+/* --- 保存・削除（Googleカレンダーへ書き込み） --- */
+async function gcalSaveFromSheet(base){
+  const dateV = document.getElementById("f-date").value;
+  const untilV = document.getElementById("f-until").value || null;
+  const e0 = editId ? gcFind(editId) : null;
+  try{
+    if (e0 && e0.recurringEventId){
+      if (editScope==="all"){ // 毎週すべて: 親イベントを更新（開始日は元のまま）
+        if (!repDays.length){ alert("くり返す曜日を選んでください"); return; }
+        const m = await gapiFetch(calPath()+"/"+encodeURIComponent(e0.recurringEventId));
+        const mDate = m.start.date || (m.start.dateTime||"").slice(0,10);
+        await gapiFetch(calPath()+"/"+encodeURIComponent(e0.recurringEventId),
+          { method:"PATCH", body: JSON.stringify(evToG({ ...base, date:mDate, repeat:{days:[...repDays], until:untilV, skip:{}} })) });
+      } else { // この日だけ: この回のインスタンスだけ変更（リスケ）
+        await gapiFetch(calPath()+"/"+encodeURIComponent(e0.id),
+          { method:"PATCH", body: JSON.stringify(evToG({ ...base, date:dateV })) });
+      }
+    } else {
+      if (repMode && !repDays.length){ alert("くり返す曜日を選んでください"); return; }
+      const body = evToG({ ...base, date:dateV, repeat: repMode ? {days:[...repDays], until:untilV, skip:{}} : null });
+      if (e0) await gapiFetch(calPath()+"/"+encodeURIComponent(e0.id), { method:"PATCH", body: JSON.stringify(body) });
+      else await gapiFetch(calPath(), { method:"POST", body: JSON.stringify(body) });
+    }
+    gcache={}; localStorage.removeItem("techo-gcache");
+    closeSheet(); render();
+  }catch(err){
+    if (String(err && err.message)==="auth") alert("Googleへの接続が切れています。画面上部のバーから再接続してください。");
+    else alert("Googleカレンダーへの保存に失敗しました。\n通信環境を確認してもう一度お試しください。");
+  }
+}
+async function gcalDeleteFromSheet(){
+  const e0 = gcFind(editId); if(!e0) return;
+  try{
+    if (e0.recurringEventId && editScope==="one"){
+      if(!confirm(`${jpDate(editOccDate)}の分だけ削除しますか？\n（他の週のくり返しは残ります）`)) return;
+      await gapiFetch(calPath()+"/"+encodeURIComponent(e0.id), {method:"DELETE"});
+    } else if (e0.recurringEventId){
+      if(!confirm("毎週のくり返し予定をすべて削除しますか？")) return;
+      await gapiFetch(calPath()+"/"+encodeURIComponent(e0.recurringEventId), {method:"DELETE"});
+    } else {
+      if(!confirm("この予定を削除しますか？")) return;
+      await gapiFetch(calPath()+"/"+encodeURIComponent(e0.id), {method:"DELETE"});
+    }
+    gcache={}; localStorage.removeItem("techo-gcache");
+    closeSheet(); render();
+  }catch(err){ alert("削除に失敗しました。通信環境をご確認ください。"); }
+}
+async function gcalLoadMasterInto(e){ // くり返し編集時、親のRRULEから曜日・終了日を反映
+  try{
+    const m = await gapiFetch(calPath()+"/"+encodeURIComponent(e.recurringEventId));
+    const r = parseRRule(m.recurrence);
+    repDays = r.days;
+    document.getElementById("f-until").value = r.until || "";
+    if (document.getElementById("repeatBox").style.display !== "none") renderDowPick();
+  }catch(_e){}
+}
+
+/* --- 連携の開始・解除（設定タブ） --- */
+function renderGcalBox(){
+  const box = document.getElementById("gcalBox"); if(!box) return;
+  if (!GCAL_CLIENT_ID){
+    box.innerHTML = '<p class="note" style="margin-top:4px">準備中です。次の更新で使えるようになります。</p>';
+  } else if (GC()){
+    box.innerHTML = `<p class="note" style="margin-top:4px">連携中：<b>${esc(GC().calName)}</b>${GC().email?`（${esc(GC().email)}）`:""}<br>
+      予定はGoogleカレンダーに保存され、通知はGoogleカレンダーアプリから届きます。</p>
+      <button class="gbtn" onclick="gcalDisconnect()">連携を解除する</button>`;
+  } else {
+    box.innerHTML = `<p class="note" style="margin-top:4px">連携すると予定がGoogleカレンダーに保存されます。<br>
+      ・予定の10分前や出発時刻にスマホへ通知が届く（Googleカレンダーアプリ）<br>
+      ・家族や友人と予定を共有できる<br>
+      ・今この手帳に入っている予定もそのまま引き継げます</p>
+      <button class="gbtn accent" onclick="gcalConnect()">Googleカレンダーと連携する</button>`;
+  }
+}
+async function gcalConnect(){
+  try{
+    await gcalAuth();
+    const cl = await gapiFetch("users/me/calendarList?minAccessRole=writer");
+    const primary = (cl.items||[]).find(c=>c.primary);
+    let cal = (cl.items||[]).find(c=>c.summary==="マイ手帳");
+    if (!cal){
+      if (confirm("Googleカレンダーの中に専用カレンダー「マイ手帳」を作りますか？\n\nOK＝専用カレンダーを作る（おすすめ）\nキャンセル＝メインのカレンダーに保存する")){
+        cal = await gapiFetch("calendars", {method:"POST", body: JSON.stringify({summary:"マイ手帳", timeZone:"Asia/Tokyo"})});
+      } else cal = primary;
+    }
+    if (!cal){ alert("使えるカレンダーが見つかりませんでした"); return; }
+    store.gcal = { calId: cal.id, calName: cal.summary, email: primary ? primary.id : "" };
+    save();
+    if (store.events.length && confirm(`今この手帳に入っている予定 ${store.events.length} 件をGoogleカレンダーへ引っ越しますか？`)){
+      for (const e of store.events){
+        try{ await gapiFetch(calPath(), {method:"POST", body: JSON.stringify(evToG(e))}); }catch(_e){}
+      }
+    }
+    gcache={}; localStorage.removeItem("techo-gcache");
+    render();
+    alert("Googleカレンダーと連携しました！\n通知を受け取るには、スマホにGoogleカレンダーアプリを入れておいてください。");
+  }catch(err){
+    if (String(err && err.message)!=="auth") alert("連携できませんでした。もう一度お試しください。");
+  }
+}
+function gcalDisconnect(){
+  if(!confirm("Googleカレンダーとの連携を解除しますか？\n（Googleカレンダー側の予定は消えません。手帳はこのスマホ内の保存に戻ります）")) return;
+  try{ if (gToken && window.google) google.accounts.oauth2.revoke(gToken, ()=>{}); }catch(_e){}
+  delete store.gcal; save();
+  gToken=null; sessionStorage.removeItem("gcal-token");
+  gcache={}; localStorage.removeItem("techo-gcache");
+  hideGcalBar(); render();
+}
+window.addEventListener("load", ()=>{ setTimeout(()=>{ gcalInit(); if (GC() && !gToken) showGcalBar(); }, 400); });
 
 /* ================= バックアップ ================= */
 function exportData(){
